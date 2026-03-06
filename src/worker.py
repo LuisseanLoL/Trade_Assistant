@@ -126,9 +126,7 @@ def process(stock_code = '600325',
         相关新闻如下：
         {news_titles}
 
-        当前持仓如下：
-        投资组合：
-        当前持仓：{stock_position} 股
+        当前该股持仓：{stock_position} 股
         当前持仓成本: {stock_holding_cost} 元
 
         请记住，行动必须是买入、卖出、持有或观望。
@@ -172,7 +170,7 @@ def process(stock_code = '600325',
         need_pro = True
     else:
         # 如果不是持仓股：先用免费模型粗筛
-        print(f"\n📡 [{stock_code}] 正在使用 {model_choice} (Flash Lite/免费初筛) 进行全盘扫描...")
+        print(f"\n📡 [{stock_code}] 正在使用 {model_choice} (Flash Lite模型) 进行初筛...")
         result = get_LLM_message(system_content=system_content, user_message=user_message, model_choice=model_choice, model_tier='flash')
         
         try:

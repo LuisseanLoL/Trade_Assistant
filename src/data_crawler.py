@@ -8,6 +8,9 @@ import re
 import json
 from datetime import datetime, timedelta
 
+# 引入自定义的新浪实时行情接口
+from src.sina_realtime import SinaRealtimeFetcher
+
 # --- 辅助函数 ---
 def get_bs_code(symbol: str) -> str:
     """将股票代码转换为 baostock 需要的格式"""
@@ -247,18 +250,33 @@ def get_macro_market_context(current_date: str) -> str:
     )
     return macro_context
 
+
 def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     """
     获取股票历史数据, 计算技术指标, 并保存为CSV文件 
     (行情基于 Baostock，财务基于新浪，机构预测基于同花顺)
     """
+    now = datetime.now()
+    is_weekend = now.weekday() >= 5
+    data_dir = f"log/stock_data/{current_date}"
+    os.makedirs(data_dir, exist_ok=True)
+    
+    # =========================================================================
+    # 🌟 核心新增：周末/已有数据缓存免拉取机制
+    # =========================================================================
+    # 如果是周末且财务及历史数据文本已生成，直接读取缓存跳过所有接口调用
+    cache_file_path = os.path.join(data_dir, f"{stock_code}_full_metrics_cache.txt")
+    if is_weekend and os.path.exists(cache_file_path):
+        print(f"📦 周末免更新机制触发：检测到 {stock_code} 行情与财务数据已存在，直接读取...")
+        with open(cache_file_path, 'r', encoding='utf-8') as f:
+            return f.read()
+
     # 优先拉取大盘宏观环境
     macro_str = get_macro_market_context(current_date)
     
     bs.login()
     bs_code = get_bs_code(stock_code)
 
-    # 为了计算长周期的指标（如200周均线、历史分位），将拉取数据的起始日期提前 3 年
     try:
         end_dt = datetime.strptime(end, "%Y%m%d")
     except:
@@ -289,6 +307,52 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
         
     k_df = pd.DataFrame(k_data_list, columns=fields.split(','))
     
+    # =========================================================================
+    # 🚀 核心新增：工作日盘中实时行情修补验证 (防止重复数据)
+    # =========================================================================
+    today_str = now.strftime("%Y-%m-%d")
+    current_time_str = now.strftime("%H:%M")
+    latest_bs_date = k_df['date'].iloc[-1] if not k_df.empty else ""
+
+    # 仅工作日上午9:30后、下午18:00前，且历史数据中尚未包含今天数据时调用
+    if not is_weekend and "09:30" <= current_time_str <= "18:00" and latest_bs_date != today_str:
+        try:
+            print(f"⚡ 正在调用 SinaRealtime 接口获取 {stock_code} 今日行情...")
+            fetcher = SinaRealtimeFetcher()
+            spot_df = fetcher.fetch_snapshot([stock_code])
+
+            if not spot_df.empty:
+                spot_data = spot_df.iloc[0]
+                latest_close = safe_float(spot_data['close'])
+                spot_volume = safe_float(spot_data['vol']) # 直接取股数
+                prev_close = safe_float(spot_data['prev_close'])
+                
+                # 手动计算涨跌幅
+                pct_chg = 0.0
+                if prev_close > 0:
+                    pct_chg = (latest_close - prev_close) / prev_close * 100.0
+
+                if latest_close > 0 and spot_volume > 0:
+                    new_row = {
+                        'date': today_str,
+                        'open': safe_float(spot_data['open']),
+                        'high': safe_float(spot_data['high']),
+                        'low': safe_float(spot_data['low']),
+                        'close': latest_close,
+                        'volume': spot_volume,
+                        'amount': safe_float(spot_data['amount']),
+                        'turn': k_df['turn'].iloc[-1] if not k_df.empty else 0.0, 
+                        'pctChg': pct_chg,
+                        'peTTM': k_df['peTTM'].iloc[-1] if not k_df.empty else 0, 
+                        'pbMRQ': k_df['pbMRQ'].iloc[-1] if not k_df.empty else 0,
+                        'psTTM': k_df['psTTM'].iloc[-1] if not k_df.empty else 0
+                    }
+                    k_df = pd.concat([k_df, pd.DataFrame([new_row])], ignore_index=True)
+                    print(f"✅ 个股今日实时行情修补成功！当前计算最新价: {latest_close}")
+        except Exception as e:
+            print(f"⚠️ 个股实时行情修补失败(将使用最新历史数据): {e}")
+    # =========================================================================
+
     # 格式化兼容计算函数
     k_df_calc = k_df.copy()
     k_df_calc = k_df_calc.rename(columns={'date': '日期', 'open': '开盘', 'high': '最高', 'low': '最低', 'close': '收盘', 'volume': '成交量'})
@@ -301,10 +365,6 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     # 截取用户指定周期以内的数据进行保存
     req_beg_date = f"{beg[:4]}-{beg[4:6]}-{beg[6:]}"
     save_data = processed_data[processed_data['日期'] >= req_beg_date]
-
-    # 创建存储目录
-    data_dir = f"log/stock_data/{current_date}"
-    os.makedirs(data_dir, exist_ok=True)
 
     # 保存文件
     safe_stock_name = re.sub(r'[\\/*?:"<>|]', '', stock_name)
@@ -329,7 +389,7 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     else:
         market_cap = 0.0
 
-    # 3. 抓取新浪财务数据 & 同花顺机构预测 (保持原逻辑)
+    # 3. 抓取新浪财务数据 & 同花顺机构预测
     try:
         fin_df = ak.stock_financial_abstract(symbol=stock_code)
         latest_report_date = fin_df.columns[2]
@@ -439,7 +499,7 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
 
     # 4. 构建输出数据
     all_metrics = {
-        # ---------------- 宏观大盘环境 (新增) ----------------
+        # ---------------- 宏观大盘环境 ----------------
         "宏观大盘环境": macro_str,
         
         # ---------------- 基础与行情数据 ----------------
@@ -532,4 +592,10 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     text_input = "\n".join(result)
     
     bs.logout()
+    
+    # 周末保存文本缓存，避免同日多次执行或不同脚本调用时重复走 API
+    if is_weekend:
+        with open(cache_file_path, 'w', encoding='utf-8') as f:
+            f.write(text_input)
+            
     return text_input
