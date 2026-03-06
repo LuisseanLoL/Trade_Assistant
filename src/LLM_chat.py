@@ -1,6 +1,6 @@
 from openai import OpenAI
 import re
-import base64
+import time
 import os
 from google import genai
 from google.genai import types
@@ -122,14 +122,13 @@ def gemini_chat(
         user_message=user_message,
         model_tier='flash'
 ):
-    """处理 Google Gemini 模型的请求"""
+    """处理 Google Gemini 模型的请求，包含高负载重试机制"""
     if model_tier == 'pro':
         model = os.getenv("gemini_pro_model", "gemini-3.1-pro-preview")
         api_key = os.getenv("gemini_pro_api_key")
         tools = [
-        types.Tool(googleSearch=types.GoogleSearch(
-        )),
-    ]
+            types.Tool(googleSearch=types.GoogleSearch()),
+        ]
     else:
         model = os.getenv("gemini_flash_model", "gemini-3.1-flash-lite-preview")
         api_key = os.getenv("gemini_flash_api_key")
@@ -144,12 +143,27 @@ def gemini_chat(
         tools=tools
     )
 
-    response = client.models.generate_content(
-        model=model,
-        contents=user_message,
-        config=generate_content_config
-    )
-    return response.text
+    # ================= 核心新增：重试机制 =================
+    max_retries = 3
+    retry_delay = 30
+
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=user_message,
+                config=generate_content_config
+            )
+            return response.text
+            
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"⚠️ Gemini API 调用异常 (503高负载或网络错误) - 第 {attempt + 1} 次尝试失败: {e}")
+                print(f"⏳ 等待 {retry_delay} 秒后进行第 {attempt + 2} 次重试...")
+                time.sleep(retry_delay)
+            else:
+                print(f"❌ Gemini API 连续 {max_retries} 次调用失败，放弃当前请求: {e}")
+                raise e  # 将错误向上抛出，交由 worker.py 外层的 try-except 捕获，从而安全跳过该只股票
 
 
 def openai_chat(
