@@ -6,7 +6,6 @@ import os
 import json
 import re
 import time
-import textwrap
 import json_repair
 from src.data_crawler import get_stock_data
 from src.news_crawler import get_news_titles
@@ -277,6 +276,10 @@ def process(stock_code = '600325',
             pos_adv = parsed_data.get('建议仓位')
             pos_str = f"{pos_adv}%" if pos_adv is not None else "N/A"
 
+            # 提取置信度，格式化为百分比
+            confidence = parsed_data.get('置信度') * 100
+            confidence_str = f"{confidence:.0f}%" if confidence is not None else "N/A"
+
             final_data = {
                 "股票代码": stock_code,
                 "股票名称": stock_name,
@@ -284,7 +287,7 @@ def process(stock_code = '600325',
                 "预期": parsed_data.get("预期", "N/A"),
                 "操作": parsed_data.get("操作", "N/A"),
                 "建议仓位": pos_str,      
-                "置信度": parsed_data.get("置信度", "N/A"),
+                "置信度": confidence_str,
                 "建议买入价": parsed_data.get("建议买入价") if parsed_data.get("建议买入价") is not None else "N/A",
                 "目标卖出价": parsed_data.get("目标卖出价") if parsed_data.get("目标卖出价") is not None else "N/A",
                 "建议止损价": parsed_data.get("建议止损价") if parsed_data.get("建议止损价") is not None else "N/A",
