@@ -2,20 +2,13 @@
 import os
 import random
 import pandas as pd
+import questionary  # 新增：用于终端炫酷交互
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from src.worker import process, SHOULD_SKIP
-import warnings
-warnings.filterwarnings("ignore")
 
 # 在所有逻辑开始前，强制加载根目录的 .env 文件
 load_dotenv()
-
-# ==========================================
-# 代理设置 (可选)
-# ==========================================
-# os.environ["http_proxy"] = "http://127.0.0.1:7890"
-# os.environ["https_proxy"] = "http://127.0.0.1:7890"
 
 def load_portfolio(csv_path="portfolio.csv"):
     """
@@ -37,7 +30,6 @@ def load_portfolio(csv_path="portfolio.csv"):
             print(f"⚠️ 读取持仓文件失败: {e}。将默认按空仓(0持仓)处理。")
     else:
         print(f"ℹ️ 未检测到本地持仓文件 '{csv_path}'。将默认按全量空仓(0持仓)处理。")
-        
     return portfolio
 
 def get_logical_date():
@@ -49,7 +41,7 @@ def get_logical_date():
 
 def main():
     # ==========================================
-    # 1. 日期计算区 (提前计算日期以便读取对应的 Daily Table)
+    # 1. 日期计算区 (使用逻辑交易日)
     # ==========================================
     current_date = get_logical_date()
     end_date = current_date 
@@ -58,16 +50,71 @@ def main():
     beg = start_date.isoformat().replace('-', '')
 
     # ==========================================
-    # 2. 配置参数区 (随心切换模式)
+    # 2. 交互式配置参数区 (使用 questionary 上下键菜单)
     # ==========================================
-    USE_RANDOM_BATCH = True   # 设置为 True 则开启随机抽盲盒，False 则使用下方的 SPECIFIC_BATCH
+    print("\n" + "="*45)
+    print("🤖 AI Quant Agent - 交互式启动菜单")
+    print("="*45 + "\n")
+
+    # --- 选择运行模式 ---
+    mode_choice = questionary.select(
+        "【步骤 1】请选择选股模式：",
+        choices=[
+            "1. 指定股票池 (手动输入需要分析的代码)",
+            "2. 随机抽盲盒 (从全市场自动抽取未分析标的)"
+        ],
+        pointer="👉"
+    ).ask()
+
+    # 如果用户按 Ctrl+C 退出
+    if not mode_choice:
+        print("👋 已取消运行。")
+        return
+
+    USE_RANDOM_BATCH = mode_choice.startswith("2")
     RANDOM_CSV_PATH = '主板股票代码.csv'  
     COLUMN_NAME = '股票代码'            
-    SAMPLE_SIZE = 1
-    
-    # 指定股票池（当随机模式不可用时的回退选项）                    
-    SPECIFIC_BATCH = "001914 600325 002553 600809 603025".split() 
-    model_choice = 'gemini'
+    SAMPLE_SIZE = 20                    
+    SPECIFIC_BATCH = ["601857"] 
+
+    if USE_RANDOM_BATCH:
+        size_input = questionary.text(
+            "请输入需要随机抽取的股票数量:", 
+            default="20"
+        ).ask()
+        if size_input and size_input.isdigit():
+            SAMPLE_SIZE = int(size_input)
+    else:
+        stocks_input = questionary.text(
+            "请输入股票代码 (多个代码用空格分隔):", 
+            default="601857"
+        ).ask()
+        if stocks_input:
+            SPECIFIC_BATCH = stocks_input.split()
+
+    # --- 选择调用模型 ---
+    model_choice_raw = questionary.select(
+        "【步骤 2】请选择大模型底层架构：",
+        choices=[
+            "1. Gemini (双模型漏斗架构: Flash粗筛 + Pro精决)",
+            "2. ARK (火山引擎)",
+            "3. Local (本地开源模型)"
+        ],
+        pointer="👉"
+    ).ask()
+
+    if not model_choice_raw:
+        print("👋 已取消运行。")
+        return
+
+    if model_choice_raw.startswith("2"):
+        model_choice = 'ark'
+    elif model_choice_raw.startswith("3"):
+        model_choice = 'local'
+    else:
+        model_choice = 'gemini'
+
+    print("\n" + "="*45 + "\n")
 
     # ==========================================
     # 3. 构建待分析的股票池 (Batch)
@@ -78,7 +125,6 @@ def main():
                 df = pd.read_csv(RANDOM_CSV_PATH, dtype=str)
                 all_codes = df[COLUMN_NAME].astype(str).str.strip().tolist()
                 
-                # ---------------- 【核心新增：剔除今日已处理的标的】 ----------------
                 daily_table_path = f"output/{current_date}/Daily Table_{current_date}.csv"
                 processed_codes = set()
                 
@@ -86,13 +132,11 @@ def main():
                     try:
                         df_daily = pd.read_csv(daily_table_path, dtype={'股票代码': str})
                         processed_codes = set(df_daily['股票代码'].astype(str).str.strip())
-                        print(f"🔍 发现今日已处理记录 {len(processed_codes)} 条，将在随机抽取时予以剔除。")
+                        print(f"🔍 发现今日({current_date})已处理记录 {len(processed_codes)} 条，将在随机抽取时予以剔除。")
                     except Exception as e:
                         print(f"⚠️ 读取今日 Daily Table 失败: {e}")
                 
-                # 过滤掉已经跑过的代码
                 all_codes = [c for c in all_codes if c not in processed_codes]
-                # ----------------------------------------------------------------
 
                 if not all_codes:
                     print("⚠️ 全量股票池中的所有股票今日均已处理完毕！")
@@ -100,22 +144,22 @@ def main():
 
                 actual_sample_size = min(SAMPLE_SIZE, len(all_codes))
                 batch = random.sample(all_codes, actual_sample_size)
-                print(f"\n🎲 [随机模式已开启] 成功从 '{RANDOM_CSV_PATH}' 中随机抽取了 {actual_sample_size} 只未处理过的股票。")
+                print(f"🎲 [随机模式] 成功从 '{RANDOM_CSV_PATH}' 中随机抽取了 {actual_sample_size} 只未处理过的股票。")
             except Exception as e:
-                print(f"\n❌ 读取随机股票池失败: {e}。将自动回退到指定股票池模式。")
+                print(f"❌ 读取随机股票池失败: {e}。将自动回退到指定股票池模式。")
                 batch = SPECIFIC_BATCH
         else:
-            print(f"\n⚠️ 找不到全量代码文件 '{RANDOM_CSV_PATH}'。将自动回退到指定股票池模式。")
+            print(f"⚠️ 找不到全量代码文件 '{RANDOM_CSV_PATH}'。将自动回退到指定股票池模式。")
             batch = SPECIFIC_BATCH
     else:
-        print("\n🎯 [指定模式已开启] 将分析预设的特定股票。")
+        print("🎯 [指定模式] 将分析你手动输入的特定股票。")
         batch = SPECIFIC_BATCH
 
-    # 加载持仓配置
     portfolio_data = load_portfolio("portfolio.csv")
 
-    print(f"\n=== 🚀 启动量化分析 Worker ===")
-    print(f"分析模型: {model_choice}")
+    print(f"\n=== 🚀 开始量化分析任务 ===")
+    print(f"使用的模型: {model_choice.upper()}")
+    print(f"逻辑归属日期: {current_date}")
     print(f"最终待分析股票池 ({len(batch)}只): {batch}")
     print("===================================\n")
 
@@ -132,7 +176,6 @@ def main():
         try:
             processed_result = process(
                 stock_code=code,
-                #移除了 cash 参数，保持与最新的 worker.py 匹配
                 stock_position=current_position,
                 stock_holding_cost=current_cost,
                 beg=beg,
