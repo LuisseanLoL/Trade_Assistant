@@ -126,16 +126,22 @@ def gemini_chat(
     if model_tier == 'pro':
         model = os.getenv("gemini_pro_model", "gemini-3.1-pro-preview")
         api_key = os.getenv("gemini_pro_api_key")
+        tools = [
+        types.Tool(googleSearch=types.GoogleSearch(
+        )),
+    ]
     else:
         model = os.getenv("gemini_flash_model", "gemini-3.1-flash-lite-preview")
         api_key = os.getenv("gemini_flash_api_key")
+        tools = []  # Flash 版本不使用工具
 
     client = genai.Client(api_key=api_key)
     
     generate_content_config = types.GenerateContentConfig(
         response_mime_type="text/plain",
         system_instruction=system_content,
-        temperature=0.8
+        temperature=0.8,
+        tools=tools
     )
 
     response = client.models.generate_content(

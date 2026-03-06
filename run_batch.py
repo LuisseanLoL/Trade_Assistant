@@ -2,7 +2,8 @@
 import os
 import random
 import pandas as pd
-import questionary  # 新增：用于终端炫酷交互
+import questionary
+from questionary import Choice  # 引入 Choice 对象进行强绑定
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from src.worker import process, SHOULD_SKIP
@@ -57,62 +58,69 @@ def main():
     print("="*45 + "\n")
 
     # --- 选择运行模式 ---
-    mode_choice = questionary.select(
+    # 使用 Choice 对象，强绑定 UI 文本与后台的 True/False 逻辑
+    is_random_mode = questionary.select(
         "【步骤 1】请选择选股模式：",
         choices=[
-            "1. 指定股票池 (手动输入需要分析的代码)",
-            "2. 随机抽盲盒 (从全市场自动抽取未分析标的)"
+            Choice("1. 指定股票池 (手动输入需要分析的代码)", value=False),
+            Choice("2. 随机抽盲盒 (从全市场自动抽取未分析标的)", value=True)
         ],
         pointer="👉"
     ).ask()
 
     # 如果用户按 Ctrl+C 退出
-    if not mode_choice:
+    if is_random_mode is None:
         print("👋 已取消运行。")
         return
 
-    USE_RANDOM_BATCH = mode_choice.startswith("2")
+    USE_RANDOM_BATCH = is_random_mode
     RANDOM_CSV_PATH = '主板股票代码.csv'  
     COLUMN_NAME = '股票代码'            
-    SAMPLE_SIZE = 20                    
-    SPECIFIC_BATCH = ["601857"] 
+    SAMPLE_SIZE = 1                    
+    SPECIFIC_BATCH = [] 
 
     if USE_RANDOM_BATCH:
         size_input = questionary.text(
             "请输入需要随机抽取的股票数量:", 
-            default="20"
+            default="1"
         ).ask()
-        if size_input and size_input.isdigit():
-            SAMPLE_SIZE = int(size_input)
+        
+        if size_input is None:
+            print("👋 已取消运行。")
+            return
+            
+        if size_input.strip().isdigit():
+            SAMPLE_SIZE = int(size_input.strip())
     else:
-        stocks_input = questionary.text(
-            "请输入股票代码 (多个代码用空格分隔):", 
-            default="601857"
-        ).ask()
-        if stocks_input:
-            SPECIFIC_BATCH = stocks_input.split()
+        # 取消了默认值，强制要求用户输入代码
+        stocks_input = ""
+        while not stocks_input:
+            stocks_input = questionary.text("请输入股票代码 (多个代码用空格分隔):").ask()
+            
+            if stocks_input is None:
+                print("👋 已取消运行。")
+                return
+                
+            stocks_input = stocks_input.strip()
+            if not stocks_input:
+                print("⚠️ 股票代码不能为空，请重新输入！")
+                
+        SPECIFIC_BATCH = stocks_input.split()
 
     # --- 选择调用模型 ---
-    model_choice_raw = questionary.select(
+    model_choice = questionary.select(
         "【步骤 2】请选择大模型底层架构：",
         choices=[
-            "1. Gemini (双模型漏斗架构: Flash粗筛 + Pro精决)",
-            "2. ARK (火山引擎)",
-            "3. Local (本地开源模型)"
+            Choice("1. Gemini (双模型漏斗架构: Flash粗筛 + Pro精决)", value='gemini'),
+            Choice("2. ARK (火山引擎)", value='ark'),
+            Choice("3. Local (本地开源模型)", value='local')
         ],
         pointer="👉"
     ).ask()
 
-    if not model_choice_raw:
+    if model_choice is None:
         print("👋 已取消运行。")
         return
-
-    if model_choice_raw.startswith("2"):
-        model_choice = 'ark'
-    elif model_choice_raw.startswith("3"):
-        model_choice = 'local'
-    else:
-        model_choice = 'gemini'
 
     print("\n" + "="*45 + "\n")
 
