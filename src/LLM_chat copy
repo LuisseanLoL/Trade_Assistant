@@ -1,0 +1,228 @@
+from volcenginesdkarkruntime import Ark
+from openai import OpenAI
+import re
+import base64
+import os
+from google import genai
+from google.genai import types
+
+output_schema = {
+  "type": "json_schema",
+  "json_schema": {
+    "schema": {
+        "type": "object",
+        "properties": {
+        "操作": {
+            "type": "string",
+            "enum": ["买入", "卖出", "持有"],
+            "description": "交易操作类型"
+        },
+        "置信度": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0,
+            "exclusiveMaximum": 1.0
+        },
+        "头寸数量": {
+            "type": "integer",
+            "minimum": 100,
+            "multipleOf": 100
+        },
+        "最高可接受买入价格": {
+            "type": "number",
+            "minimum": 0.0
+        },
+        "最低可接受卖出价格": {
+            "type": "number",
+            "minimum": 0.0
+        },
+        "各种信号": {
+            "type": "object",
+            "properties": {
+            "情绪分析": {
+                "type": "object",
+                "properties": {
+                "信号": {"type": "string"},
+                "解析": {"type": "string"},
+                "置信度": {"type": "number"}
+                },
+                "required": ["信号", "解析", "置信度"]
+            },
+            "估值分析": {
+                "type": "object",
+                "properties": {
+                "信号": {"type": "string"},
+                "解析": {"type": "string"},
+                "置信度": {"type": "number"}
+                },
+                "required": ["信号", "解析", "置信度"]
+            },
+            "基本面分析": {
+                "type": "object",
+                "properties": {
+                "信号": {"type": "string"},
+                "解析": {"type": "string"},
+                "置信度": {"type": "number"}
+                },
+                "required": ["信号", "解析", "置信度"]
+            },
+            "技术分析": {
+                "type": "object",
+                "properties": {
+                "信号": {"type": "string"},
+                "解析": {"type": "string"},
+                "置信度": {"type": "number"}
+                },
+                "required": ["信号", "解析", "置信度"]
+            },
+            },
+            "required": ["估值分析", "基本面分析", "技术分析", "情绪分析"]
+        },
+        "原因": {"type": "string"}
+        },
+        "required": ["操作", "置信度", "头寸数量", "各种信号", "原因"],
+        "dependentRequired": {
+        "操作": {
+            "oneOf": [
+            {
+                "if": {"properties": {"操作": {"const": "买入"}}},
+                "then": {"required": ["最高可接受买入价格"]}
+            },
+            {
+                "if": {"properties": {"操作": {"const": "卖出"}}},
+                "then": {"required": ["最低可接受卖出价格"]}
+            }
+            ]
+        }
+        }
+    }
+  }
+}
+
+backtest_schema = {
+  "type": "json_schema",
+  "json_schema": {
+    "schema": {
+        "type": "object",
+        "properties": {
+        "操作": {
+            "type": "string",
+            "enum": ["买入", "卖出", "不操作"],
+            "description": "交易操作类型"
+        },
+        "置信度": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0,
+            "exclusiveMaximum": 1.0
+        },
+        "头寸数量": {
+            "type": "integer",
+            "minimum": 0,
+            "multipleOf": 100
+        },
+        "可接受价格": {
+            "type": "number",
+            "minimum": 0.0
+        },
+        },
+        "required": ["操作", "置信度", "头寸数量","可接受价格"]
+    }
+  }
+}
+
+with open('LLM system content.txt', 'r', encoding='utf-8') as file:
+    # 读取整个文件内容
+    system_content = file.read()
+
+with open(r'test\\input.txt', 'r', encoding='utf-8') as file:
+    # 读取整个文件内容
+    user_message = file.read()
+
+def gemini_chat(
+        system_content=system_content, 
+        user_message=user_message
+):
+    client = genai.Client(api_key=os.getenv("gemini_api_key"))
+    model = os.getenv("gemini_model")
+    contents = user_message
+    tools = [
+        types.Tool(google_search=types.GoogleSearch())
+    ]
+    generate_content_config = types.GenerateContentConfig(
+        tools=tools,
+        response_mime_type="text/plain",
+        system_instruction=system_content,
+        temperature = 0.8
+    )
+
+    response = client.models.generate_content(
+    model=model,
+    contents=contents,
+    config=generate_content_config
+)
+    return response.text
+
+def ARK_chat(
+        system_content=system_content, 
+        user_message=user_message,
+        schema=output_schema
+):
+    client = Ark(api_key='b7bfbd95-1765-43fa-9ee2-e0cfd13e3fec')
+    completion = client.bot_chat.completions.create(
+        model='bot-20250214192429-94sbw',
+        messages = [
+            {"role": "system", "content": f"{system_content}"},
+            {"role": "user", "content": f"{user_message}"},
+        ],
+        response_format=schema
+    )
+    result = completion.choices[0].message.content
+    return result
+
+def local_chat(
+        system_content=system_content, 
+        user_message=user_message,
+        schema=output_schema
+):
+    client = OpenAI(base_url=os.getenv("local_url"), api_key=os.getenv("local_api_key"))
+    message = [
+                    {"role": "system", "content": system_content},
+                    {"role": "user", "content": user_message}
+                ]
+    response = client.chat.completions.create(
+        model=os.getenv("local_model"),
+        messages = message,
+        response_format=schema
+    )
+
+    result = response.choices[0].message.content
+    cleaned_content = re.sub(r'<think>.*?</think>', '', str(result), flags=re.DOTALL)
+    # print(cleaned_content)
+    return cleaned_content
+
+def get_LLM_message(
+        system_content=system_content, 
+        user_message=user_message,
+        model_choice='gemini',
+        backtest=None
+):
+    """
+    model_choice:'gemini','ark','local'
+    """
+
+    if backtest == None:
+        schema = output_schema
+    else:
+        schema = backtest_schema
+
+    if model_choice == 'gemini':
+        response = gemini_chat(system_content=system_content,user_message=user_message)
+    elif model_choice == 'ark':
+        response = ARK_chat(system_content=system_content,user_message=user_message,schema=schema)
+    elif model_choice == 'local':
+        response = local_chat(system_content=system_content,user_message=user_message,schema=schema)
+    else:
+        raise ValueError(f"不支持或未知的模型: {model_choice}。请选择'gemini','ark','local'其中的一个模型。")
+
+    return response
