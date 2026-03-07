@@ -9,7 +9,7 @@ import time
 import json_repair
 from src.data_crawler import get_stock_data
 from src.news_crawler import get_news_titles
-from src.LLM_chat import get_LLM_message
+from src.LLM_chat import get_LLM_message, get_model_config
 
 def get_logical_date():
     """获取逻辑交易日：每天早上 9:00 以前，均归属于前一天的盘后分析"""
@@ -153,6 +153,15 @@ def process(stock_code = '600325',
     
     # 文件打上确切使用的模型标签
     model_tag = f"D-{flash_model}-{pro_model}" if (run_pro and dual_filter) else (pro_model if run_pro else flash_model)
+    
+    # 动态解析模型名称用于展示和存表
+    configs = get_model_config()
+    if model_tag.startswith("D-"):
+        parts = model_tag.split("-")
+        disp_model = f"{configs.get(parts[2], {}).get('name', parts[2])}(双筛)" if len(parts) >= 3 else model_tag
+    else:
+        disp_model = configs.get(model_tag, {}).get('name', model_tag)
+
     filename_out = f"{stock_code}_{stock_name}_output_{model_tag}_{current_date}.txt"
     filepath_out = os.path.join(output_dir, filename_out)
 
@@ -188,7 +197,7 @@ def process(stock_code = '600325',
         conf_str = f"{conf * 100:.0f}%" if conf is not None else "N/A"
 
         final_data = {
-            "股票代码": stock_code, "股票名称": stock_name, "当前价格": stock_price,
+            "股票代码": stock_code, "股票名称": stock_name, "决策模型": disp_model, "当前价格": stock_price,
             "预期": parsed_data.get("预期", "N/A"), "操作": parsed_data.get("操作", "N/A"), "建议仓位": pos_str,      
             "置信度": conf_str, "建议买入价": b_p if b_p else "N/A", "目标卖出价": t_p if t_p else "N/A", "建议止损价": s_p if s_p else "N/A", "回报风险比": reward_risk_ratio_str
         }
@@ -200,7 +209,7 @@ def process(stock_code = '600325',
         for attempt in range(3):
             try:
                 if not os.path.exists(file_path):
-                    pd.DataFrame({"股票代码": [], "股票名称": [], "当前价格": [], "预期": [], "操作": [], "建议仓位": [], "置信度": [], "建议买入价": [], "目标卖出价": [], "建议止损价": [], "回报风险比": []}).to_csv(file_path, index=False, encoding='utf-8-sig') 
+                    pd.DataFrame({"股票代码": [], "股票名称": [], "决策模型": [], "当前价格": [], "预期": [], "操作": [], "建议仓位": [], "置信度": [], "建议买入价": [], "目标卖出价": [], "建议止损价": [], "回报风险比": []}).to_csv(file_path, index=False, encoding='utf-8-sig') 
                 output_df.to_csv(file_path, index=False, header=False, mode='a', encoding='utf-8-sig')
                 break 
             except PermissionError as e:

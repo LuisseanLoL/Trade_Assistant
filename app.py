@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 # 加载环境变量
 load_dotenv()
 
-# 导入您原本的 src 工具模块，新增 get_model_config 的导入
+# 导入您原本的 src 工具模块
 from src.data_crawler import get_stock_data, get_bs_code
 from src.news_crawler import get_news_titles
 from src.LLM_chat import get_LLM_message, get_model_config
@@ -297,7 +297,8 @@ content = html.Div([
                     create_stat_card("AI 置信度", "out-confidence", "#e64980"),
                     create_stat_card("建议买点", "out-buy-price", "#37b24d"), 
                     create_stat_card("目标卖点", "out-sell-price", "#f03e3e"), 
-                    create_stat_card("建议止损", "out-stop-price", "#be4bdb")
+                    create_stat_card("建议止损", "out-stop-price", "#be4bdb"),
+                    create_stat_card("决策模型", "out-model-name", "#20c997")
                 ], className="flex-nowrap", style={"overflowX": "auto", "margin": 0})
             ], style={"flexGrow": 1, "overflow": "hidden"})
         ], className="d-flex align-items-center mb-2", style={"width": "100%"}),
@@ -315,13 +316,13 @@ content = html.Div([
         ], className="gx-2")
     ]),
 
-    html.H6("历史建议日志", className="fw-bold mt-2 mb-2", style={"color": "#2d3748", "fontSize": "0.95rem"}),
+    html.H6("历史决策日志", className="fw-bold mt-2 mb-2", style={"color": "#2d3748", "fontSize": "0.95rem"}),
     dbc.Card([
         dbc.CardBody([
             dbc.Tabs(id="date-tabs", active_tab=get_all_output_dates()[0] if get_all_output_dates() else "", children=[dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()[:5]], className="mb-2"), 
             dash_table.DataTable(
                 id='daily-table',
-                columns=[{"name": i, "id": i} for i in ["股票代码", "股票名称", "当前价格", "预期", "操作", "建议仓位", "置信度", "建议买入价", "目标卖出价", "建议止损价", "回报风险比", "详情"]],
+                columns=[{"name": i, "id": i} for i in ["股票代码", "股票名称", "决策模型", "当前价格", "预期", "操作", "建议仓位", "置信度", "建议买入价", "目标卖出价", "建议止损价", "回报风险比", "详情"]],
                 style_table={'overflowX': 'auto', 'minWidth': '100%'}, 
                 style_cell={'backgroundColor': '#ffffff', 'color': '#495057', 'textAlign': 'center', 'border': 'none', 'borderBottom': '1px solid #f1f3f5', 'padding': '8px', 'fontSize': '0.8rem'},
                 style_header={'backgroundColor': '#f8f9fa', 'fontWeight': 'bold', 'color': '#868e96', 'borderBottom': '2px solid #e9ecef', 'padding': '8px'},
@@ -364,7 +365,8 @@ def update_table(active_tab): return load_daily_table_by_date(active_tab) if act
 @app.callback(
     [Output("main-chart", "figure"), Output("out-stock-name", "children"),
      Output("out-action", "children"), Output("out-expectation", "children"), Output("out-position", "children"), Output("out-confidence", "children"),
-     Output("out-buy-price", "children"), Output("out-sell-price", "children"), Output("out-stop-price", "children"), Output("out-reasoning", "children"), Output("out-news", "children"), 
+     Output("out-buy-price", "children"), Output("out-sell-price", "children"), Output("out-stop-price", "children"), Output("out-model-name", "children"),
+     Output("out-reasoning", "children"), Output("out-news", "children"), 
      Output("out-macro", "children"), Output("out-financial", "children"), Output("out-quant", "children"), 
      Output("date-tabs", "children"), Output("date-tabs", "active_tab", allow_duplicate=True), Output("daily-table", "data", allow_duplicate=True)], 
     [Input("btn-analyze", "n_clicks"), Input("daily-table", "active_cell")],
@@ -375,7 +377,7 @@ def update_table(active_tab): return load_daily_table_by_date(active_tab) if act
 )
 def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_pro_switch, pro_model, dual_filter_switch, position, cost, table_data, active_tab):
     ctx = dash.callback_context
-    if not ctx.triggered: return [dash.no_update] * 17
+    if not ctx.triggered: return [dash.no_update] * 18
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
     use_pro = bool(use_pro_switch)
@@ -383,15 +385,30 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
 
     layout_cfg = dict(template="plotly_white", margin=dict(l=30, r=20, t=10, b=10), hovermode="x unified", xaxis_rangeslider_visible=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', xaxis_type='category')
     fig = go.Figure(layout=layout_cfg)
+
+    def get_display_model_name(tag):
+        if not tag: return "-"
+        if tag.startswith("D-"):
+            parts = tag.split("-")
+            if len(parts) >= 3:
+                p_name = MODEL_CONFIGS.get(parts[2], {}).get('name', parts[2])
+                return f"{p_name}(双筛)"
+        return MODEL_CONFIGS.get(tag, {}).get('name', tag)
     
     if trigger_id == 'daily-table':
-        if not active_cell or active_cell['column_id'] != '详情': return [dash.no_update] * 17
+        if not active_cell or active_cell['column_id'] != '详情': return [dash.no_update] * 18
         row_data = table_data[active_cell['row']]
         h_stock, h_date, h_stock_name = row_data['股票代码'], active_tab, row_data.get('股票名称', '未知')
         
         in_fs, out_fs = glob.glob(f"input/{h_date}/{h_stock}_*_input_{h_date}.txt"), glob.glob(f"output/{h_date}/{h_stock}_*_output_*_{h_date}.txt")
-        if not in_fs or not out_fs: return fig, f"{h_stock_name} ({h_stock})", "-", "-", "-", "-", "-", "-", "-", "未能找到历史文本文件！", "-", "-", "-", "-", dash.no_update, dash.no_update, dash.no_update
+        if not in_fs or not out_fs: return fig, f"{h_stock_name} ({h_stock})", "-", "-", "-", "-", "-", "-", "-", "-", "未能找到历史文本文件！", "-", "-", "-", "-", dash.no_update, dash.no_update, dash.no_update
         
+        try:
+            m_tag = os.path.basename(out_fs[0]).split('_output_')[1].rsplit('_', 1)[0]
+        except:
+            m_tag = "-"
+        disp_model = get_display_model_name(m_tag)
+
         with open(in_fs[0], 'r', encoding='utf-8') as f: h_in = f.read()
         with open(out_fs[0], 'r', encoding='utf-8') as f: h_out = f.read()
         
@@ -415,14 +432,14 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
         fig.update_layout(**layout_cfg)
         fig.update_xaxes(type='category', tickmode='auto', nticks=12)
         
-        return fig, f"{h_stock_name} ({h_stock})", parsed["action"], parsed["expectation"], parsed["pos_adv"], parsed["confidence"], str(parsed["buy_p"]) if parsed["buy_p"] else "-", str(parsed["sell_p"]) if parsed["sell_p"] else "-", str(parsed["stop_p"]) if parsed["stop_p"] else "-", parsed["reasoning"], news_t, macro_ui, fin_ui, quant_ui, dash.no_update, dash.no_update, dash.no_update
+        return fig, f"{h_stock_name} ({h_stock})", parsed["action"], parsed["expectation"], parsed["pos_adv"], parsed["confidence"], str(parsed["buy_p"]) if parsed["buy_p"] else "-", str(parsed["sell_p"]) if parsed["sell_p"] else "-", str(parsed["stop_p"]) if parsed["stop_p"] else "-", disp_model, parsed["reasoning"], news_t, macro_ui, fin_ui, quant_ui, dash.no_update, dash.no_update, dash.no_update
 
-    if not stock_code: return [dash.no_update] * 17
+    if not stock_code: return [dash.no_update] * 18
     c_date = get_logical_date()
     c_str, end, beg = c_date.strftime("%Y-%m-%d"), c_date.isoformat().replace('-', ''), (c_date - timedelta(days=180)).isoformat().replace('-', '')
     stock_code = stock_code.strip()
     s_name = get_stock_name_bs(stock_code)
-    safe_s_name = re.sub(r'[\\/:*?"<>|]', '', s_name)
+    safe_s_name = re.sub(r'[\\/:*?"<>|]', '', s_name) 
     
     df_chart = get_chart_data(stock_code, beg, end)
     s_price = df_chart['close'].iloc[-1] if not df_chart.empty else 0
@@ -470,6 +487,8 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
         res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=pro_model)
     
     model_tag = f"D-{flash_model}-{pro_model}" if (run_pro and dual_filter) else (pro_model if run_pro else flash_model)
+    disp_model = get_display_model_name(model_tag)
+    
     os.makedirs(f"output/{c_str}", exist_ok=True)
     with open(f"output/{c_str}/{stock_code}_{safe_s_name}_output_{model_tag}_{c_str}.txt", 'w', encoding='utf-8') as f: f.write(res_text)
 
@@ -488,10 +507,10 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     except: pass
 
     pd.DataFrame([{
-        "股票代码": stock_code, "股票名称": s_name, "当前价格": s_price, "预期": parsed["expectation"], "操作": parsed["action"], "建议仓位": parsed["pos_adv"], "置信度": parsed["confidence"], "建议买入价": str(buy_p) if buy_p else "-", "目标卖出价": str(sell_p) if sell_p else "-", "建议止损价": str(stop_p) if stop_p else "-", "回报风险比": rr_str
+        "股票代码": stock_code, "股票名称": s_name, "决策模型": disp_model, "当前价格": s_price, "预期": parsed["expectation"], "操作": parsed["action"], "建议仓位": parsed["pos_adv"], "置信度": parsed["confidence"], "建议买入价": str(buy_p) if buy_p else "-", "目标卖出价": str(sell_p) if sell_p else "-", "建议止损价": str(stop_p) if stop_p else "-", "回报风险比": rr_str
     }]).to_csv(f"output/{c_str}/Daily Table_{c_str}.csv", index=False, header=not os.path.exists(f"output/{c_str}/Daily Table_{c_str}.csv"), mode='a', encoding='utf-8-sig')
 
-    return fig, f"{s_name} ({stock_code})", parsed["action"], parsed["expectation"], parsed["pos_adv"], parsed["confidence"], str(buy_p) if buy_p else "-", str(sell_p) if sell_p else "-", str(stop_p) if stop_p else "-", parsed["reasoning"], news_t, macro_ui, fin_ui, quant_ui, [dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()[:5]], c_str, load_daily_table_by_date(c_str)
+    return fig, f"{s_name} ({stock_code})", parsed["action"], parsed["expectation"], parsed["pos_adv"], parsed["confidence"], str(buy_p) if buy_p else "-", str(sell_p) if sell_p else "-", str(stop_p) if stop_p else "-", disp_model, parsed["reasoning"], news_t, macro_ui, fin_ui, quant_ui, [dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()[:5]], c_str, load_daily_table_by_date(c_str)
 
 if __name__ == '__main__':
     app.run(debug=True, port=8050)
