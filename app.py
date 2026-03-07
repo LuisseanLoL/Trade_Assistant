@@ -92,9 +92,9 @@ def load_all_daily_tables():
 # Dash 界面构建
 # ==========================================
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.CYBORG])
-app.title = "AI Quant Terminal"
+app.title = "Trade Assistant"
 
-navbar = dbc.NavbarSimple(brand="🤖 AI Quant Terminal", color="dark", dark=True, fluid=True)
+navbar = dbc.NavbarSimple(brand="🤖 Trade Assistant", color="dark", dark=True, fluid=True)
 
 control_panel = dbc.Card([
     dbc.CardHeader("⚙️ 策略控制台"),

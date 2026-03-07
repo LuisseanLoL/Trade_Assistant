@@ -132,16 +132,20 @@ def gemini_chat(
     else:
         model = os.getenv("gemini_flash_model", "gemini-3.1-flash-lite-preview")
         api_key = os.getenv("gemini_flash_api_key")
-        tools = []  # Flash 版本不使用工具
+        tools = None  # 初筛模型不使用工具，以节省资源和降低复杂度
 
     client = genai.Client(api_key=api_key)
     
-    generate_content_config = types.GenerateContentConfig(
-        response_mime_type="text/plain",
-        system_instruction=system_content,
-        temperature=0.8,
-        tools=tools
-    )
+    # 仅在有工具时才传入
+    config_kwargs = {
+        "response_mime_type": "text/plain",
+        "system_instruction": system_content,
+        "temperature": 0.8,
+    }
+    if tools:
+        config_kwargs["tools"] = tools
+
+    generate_content_config = types.GenerateContentConfig(**config_kwargs)
 
     # ================= 核心新增：重试机制 =================
     max_retries = 3
