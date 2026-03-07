@@ -19,6 +19,34 @@ def get_bs_code(symbol: str) -> str:
     elif symbol.startswith('8') or symbol.startswith('4'): return f"bj.{symbol}"
     return symbol
 
+# ========== 新增拆分出来的函数 ==========
+def get_stock_name_bs(stock_code):
+    bs.login()
+    bs_code = get_bs_code(stock_code)
+    rs_basic = bs.query_stock_basic(code=bs_code)
+    stock_name = "未知名称"
+    if rs_basic.error_code == '0' and rs_basic.next():
+        stock_name = rs_basic.get_row_data()[1]
+    bs.logout()
+    return stock_name
+
+def get_chart_data(stock_code, beg, end):
+    bs.login()
+    bs_code = get_bs_code(stock_code)
+    bs_start = f"{beg[:4]}-{beg[4:6]}-{beg[6:]}"
+    bs_end = f"{end[:4]}-{end[4:6]}-{end[6:]}"
+    
+    rs = bs.query_history_k_data_plus(bs_code, "date,open,high,low,close,volume", start_date=bs_start, end_date=bs_end, frequency="d", adjustflag="2")
+    data_list = []
+    while (rs.error_code == '0') & rs.next(): data_list.append(rs.get_row_data())
+        
+    df = pd.DataFrame(data_list, columns=rs.fields)
+    for col in ["open", "high", "low", "close", "volume"]:
+        if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
+    bs.logout()
+    return df
+# ========================================
+
 def safe_float(val, default=0.0):
     """安全地将字符串转换为浮点数"""
     try:

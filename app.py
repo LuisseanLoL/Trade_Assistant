@@ -7,220 +7,26 @@ from plotly.subplots import make_subplots
 import pandas as pd
 from datetime import datetime, timedelta
 import os
-import random
 import re
 import json_repair
-import concurrent.futures
 import glob
 from dotenv import load_dotenv
 
 # 加载环境变量
 load_dotenv()
 
-# 导入您原本的 src 工具模块
-from src.data_crawler import get_stock_data, get_bs_code
-from src.news_crawler import get_news_titles
+# 导入 src 模块
+from src.data_crawler import get_stock_data, get_bs_code, get_stock_name_bs, get_chart_data
 from src.LLM_chat import get_LLM_message, get_model_config
-import baostock as bs
-
-# ==========================================
-# 辅助函数 
-# ==========================================
-def get_logical_date():
-    now = datetime.now()
-    if now.hour < 9: return (now - timedelta(days=1)).date()
-    return now.date()
-
-def get_stock_name_bs(stock_code):
-    bs.login()
-    bs_code = get_bs_code(stock_code)
-    rs_basic = bs.query_stock_basic(code=bs_code)
-    stock_name = "未知名称"
-    if rs_basic.error_code == '0' and rs_basic.next():
-        stock_name = rs_basic.get_row_data()[1]
-    bs.logout()
-    return stock_name
-
-def get_chart_data(stock_code, beg, end):
-    bs.login()
-    bs_code = get_bs_code(stock_code)
-    bs_start = f"{beg[:4]}-{beg[4:6]}-{beg[6:]}"
-    bs_end = f"{end[:4]}-{end[4:6]}-{end[6:]}"
-    
-    rs = bs.query_history_k_data_plus(bs_code, "date,open,high,low,close,volume", start_date=bs_start, end_date=bs_end, frequency="d", adjustflag="2")
-    data_list = []
-    while (rs.error_code == '0') & rs.next(): data_list.append(rs.get_row_data())
-        
-    df = pd.DataFrame(data_list, columns=rs.fields)
-    for col in ["open", "high", "low", "close", "volume"]:
-        if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
-    bs.logout()
-    return df
-
-def fetch_news_safely(symbol, stock_name, current_date_str):
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(get_news_titles, symbol=symbol, stock_name=stock_name, max_news=20, save_txt=True, current_date=current_date_str)
-        return future.result()
-
-def get_all_output_dates():
-    dates = []
-    if os.path.exists("output"):
-        for folder_name in os.listdir("output"):
-            if os.path.isdir(os.path.join("output", folder_name)) and os.path.exists(os.path.join("output", folder_name, f"Daily Table_{folder_name}.csv")):
-                dates.append(folder_name)
-    return sorted(dates, reverse=True)
-
-def load_daily_table_by_date(date_str):
-    file_path = f"output/{date_str}/Daily Table_{date_str}.csv"
-    if os.path.exists(file_path):
-        try:
-            df = pd.read_csv(file_path, dtype=str, on_bad_lines='skip')
-            df['_conf_val'] = df['置信度'].str.replace('%', '', regex=False).astype(float).fillna(0)
-            df['_action_rank'] = df['操作'].apply(lambda x: 0 if str(x).strip() == '买入' else 1)
-            df = df.sort_values(by=['_action_rank', '_conf_val'], ascending=[True, False]).drop(columns=['_conf_val', '_action_rank'])
-            df['详情'] = '查看'
-            return df.to_dict('records')
-        except: pass
-    return []
-
-def get_random_unprocessed_stock():
-    current_date_str = get_logical_date().strftime("%Y-%m-%d")
-    csv_path = '主板股票代码.csv'
-    if not os.path.exists(csv_path): return None, "未找到 '主板股票代码.csv'"
-    try:
-        df = pd.read_csv(csv_path, dtype=str)
-        all_codes = df['股票代码'].astype(str).str.strip().tolist()
-        daily_table_path = f"output/{current_date_str}/Daily Table_{current_date_str}.csv"
-        processed_codes = set(pd.read_csv(daily_table_path, dtype={'股票代码': str})['股票代码'].astype(str).str.strip()) if os.path.exists(daily_table_path) else set()
-        unprocessed_codes = [c for c in all_codes if c not in processed_codes]
-        if not unprocessed_codes: return None, "今日全部股票已分析完毕"
-        return random.choice(unprocessed_codes), None
-    except Exception as e: return None, str(e)
-
-def parse_llm_json(result_text):
-    res = {"action": "-", "expectation": "-", "pos_adv": "-", "confidence": "-", "buy_p": "-", "sell_p": "-", "stop_p": "-", "reasoning": result_text}
-    try:
-        c_text = result_text.replace("“", '"').replace("”", '"')
-        s_idx, e_idx = c_text.find('{'), c_text.rfind('}')
-        if s_idx != -1 and e_idx != -1:
-            parsed = json_repair.loads(c_text[s_idx : e_idx + 1])
-            res.update({
-                "action": parsed.get("操作", "-"), "expectation": parsed.get("预期", "-"), "pos_adv": f"{parsed.get('建议仓位', 0)}%",
-                "confidence": f"{parsed.get('置信度', 0) * 100:.0f}%", "buy_p": parsed.get('建议买入价'), "sell_p": parsed.get('目标卖出价'),
-                "stop_p": parsed.get('建议止损价'), "reasoning": parsed.get('原因', '暂无深度逻辑')
-            })
-    except: pass
-    return res
-
-# === 核心解析与UI构建引擎 ===
-def get_index_kline_fig():
-    files = glob.glob("log/index_data/sh000001_daily_*.csv")
-    fig = go.Figure()
-    fig.update_layout(template="plotly_white", margin=dict(l=0, r=0, t=5, b=0), height=120, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', xaxis=dict(visible=False, type='category'), yaxis=dict(visible=False))
-    if files:
-        try:
-            df = pd.read_csv(max(files)).tail(60) 
-            df['date'] = df['date'].astype(str)
-            fig.add_trace(go.Candlestick(x=df['date'], open=df['open'], high=df['high'], low=df['low'], close=df['close'], increasing_line_color='#f03e3e', decreasing_line_color='#2f9e44'))
-            fig.update_layout(xaxis_rangeslider_visible=False)
-        except: pass
-    return fig
-
-def parse_and_build_macro_ui(input_text):
-    macro_dict = {}
-    if "【宏观大盘环境】" in input_text:
-        block = input_text.split("【宏观大盘环境】")[1].split("======")[0]
-        for line in block.split('\n'):
-            if ':' in line or '：' in line:
-                k, v = re.split(r'[:：]', line, 1)
-                macro_dict[k.strip()] = v.strip()
-    
-    idx_val = macro_dict.get("上证指数", "-").split('(')[0].strip()
-    trend = macro_dict.get("大盘趋势", "-").split('(')[0].strip()
-    rsi = macro_dict.get("情绪指标(RSI14)", "-").split('(')[0].strip()
-    z_score = macro_dict.get("偏离度(Z-Score)", "-").split('(')[0].strip()
-    
-    def mini_kpi(label, val, color="#495057"):
-        return html.Div([
-            html.Div(label, style={"fontSize": "0.7rem", "color": "#868e96"}),
-            html.Div(val, style={"fontSize": "0.95rem", "fontWeight": "bold", "color": color})
-        ], style={"backgroundColor": "#f8f9fa", "padding": "4px", "borderRadius": "4px", "textAlign": "center"})
-
-    return html.Div([
-        dcc.Graph(figure=get_index_kline_fig(), config={'displayModeBar': False}),
-        html.Div([
-            dbc.Row([dbc.Col(mini_kpi("上证指数", idx_val, "#f03e3e"), width=6, className="pe-1"), dbc.Col(mini_kpi("大盘趋势", trend, "#37b24d"), width=6, className="ps-1")], className="mb-1"),
-            dbc.Row([dbc.Col(mini_kpi("RSI情绪", rsi), width=6, className="pe-1"), dbc.Col(mini_kpi("偏离度", z_score), width=6, className="ps-1")]),
-        ], className="mt-1")
-    ], style={"height": "260px", "display": "flex", "flexDirection": "column", "justifyContent": "space-between"})
-
-def parse_and_build_fin_and_quant_ui(input_text):
-    fin_dict = {}
-    quant_dict = {}
-    news_text = "暂无新闻数据"
-    
-    lines = input_text.split('\n')
-    for line in lines:
-        if ':' in line or '：' in line:
-            k, v = re.split(r'[:：]', line, 1)
-            fin_dict[k.strip()] = v.strip()
-            
-    try:
-        s_idx, e_idx = input_text.find('量化策略信号矩阵:\n{'), input_text.find('}\n滚动市盈率')
-        if s_idx != -1 and e_idx != -1:
-            quant_dict = json_repair.loads(input_text[s_idx + 9 : e_idx + 1])
-    except: pass
-    
-    if "相关新闻如下：" in input_text:
-        try: news_text = input_text.split("相关新闻如下：")[1].split("当前该股持仓：")[0].strip()
-        except: pass
-
-    def format_market_cap(val_str):
-        try: return f"{float(val_str) / 100000000:.2f}亿"
-        except: return val_str
-
-    def get_color(val_str):
-        try:
-            num = float(re.sub(r'[^\d\.-]', '', val_str))
-            return "#f03e3e" if num > 0 else "#2f9e44" if num < 0 else "#2d3748"
-        except: return "#2d3748"
-
-    def f_item(label, key, color_type='neutral'):
-        val = fin_dict.get(key, "-")
-        if key == "总市值": val = format_market_cap(val)
-        c = get_color(val) if color_type == 'growth' else "#2d3748"
-        return html.Div([
-            html.Div(label, style={"color": "#868e96", "fontSize": "0.65rem", "whiteSpace": "nowrap"}),
-            html.Div(val, style={"color": c, "fontWeight": "bold", "fontSize": "0.8rem", "whiteSpace": "nowrap"})
-        ], className="col-4 mb-1")
-
-    fin_ui = html.Div([
-        html.Div([
-            html.H6("估值与规模", style={"fontSize": "0.7rem", "fontWeight": "bold", "color": "#495057", "marginBottom": "4px"}),
-            dbc.Row([f_item("总市值", "总市值"), f_item("PE(TTM)", "滚动市盈率 P/E(TTM)"), f_item("PE分位", "市盈率(PE)历史分位"), f_item("PB", "市净率 P/B"), f_item("PB分位", "市净率(PB)历史分位"), f_item("PS", "市销率 P/S")], className="gx-1 mb-0"),
-        ], style={"backgroundColor": "#f8f9fa", "padding": "6px", "borderRadius": "4px", "marginBottom": "8px"}),
-        
-        html.Div([
-            html.H6("盈利与成长", style={"fontSize": "0.7rem", "fontWeight": "bold", "color": "#495057", "marginBottom": "4px"}),
-            dbc.Row([
-                f_item("ROE", "净资产收益率(ROE)", 'growth'), f_item("毛利率", "毛利率", 'growth'), f_item("净利率", "销售净利率", 'growth'), 
-                f_item("营收同比", "营业总收入增长率", 'growth'), f_item("净利同比", "净利润增长率", 'growth'), f_item("负债率", "资产负债率")
-            ], className="gx-1 mb-0"),
-        ], style={"backgroundColor": "#f8f9fa", "padding": "6px", "borderRadius": "4px"})
-    ])
-    
-    quant_ui = html.Div([
-        html.Div([
-            html.Div(k, style={"color": "#495057", "fontSize": "0.75rem", "fontWeight": "bold"}),
-            html.Div([
-                html.Span(f"{v.get('信号', '-')} ", style={"color": "#37b24d" if v.get('信号')=='看空' else "#f03e3e" if v.get('信号') in ['看多','买入'] else "#868e96", "fontWeight": "bold", "fontSize": "0.75rem"}),
-                html.Span(f"({v.get('置信度', '-')})", style={"color": "#adb5bd", "fontSize": "0.7rem"})
-            ])
-        ], style={"display": "flex", "justifyContent": "space-between", "borderBottom": "1px solid #f1f3f5", "padding": "4px 0"})
-        for k, v in quant_dict.items()
-    ], style={"padding": "0 2px"})
-    
-    return fin_ui, quant_ui, news_text
+from src.utils import (
+    get_logical_date, 
+    fetch_news_safely, 
+    get_all_output_dates, 
+    load_daily_table_by_date, 
+    get_random_unprocessed_stock, 
+    parse_llm_json
+)
+from src.ui_components import parse_and_build_macro_ui, parse_and_build_fin_and_quant_ui
 
 # ==========================================
 # 界面构建
@@ -295,9 +101,9 @@ content = html.Div([
                     create_stat_card("方向预期", "out-expectation", "#845ef7"), 
                     create_stat_card("建议仓位", "out-position", "#f59f00"), 
                     create_stat_card("AI 置信度", "out-confidence", "#e64980"),
-                    create_stat_card("建议买点", "out-buy-price", "#37b24d"), 
+                    create_stat_card("建议买点", "out-buy-price", "#be4bdb"), 
                     create_stat_card("目标卖点", "out-sell-price", "#f03e3e"), 
-                    create_stat_card("建议止损", "out-stop-price", "#be4bdb"),
+                    create_stat_card("建议止损", "out-stop-price", "#37b24d"),
                     create_stat_card("决策模型", "out-model-name", "#20c997")
                 ], className="flex-nowrap", style={"overflowX": "auto", "margin": 0})
             ], style={"flexGrow": 1, "overflow": "hidden"})
@@ -394,6 +200,29 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
                 p_name = MODEL_CONFIGS.get(parts[2], {}).get('name', parts[2])
                 return f"{p_name}(双筛)"
         return MODEL_CONFIGS.get(tag, {}).get('name', tag)
+
+    # 动态渲染颜色的辅助函数
+    def format_dynamic_color(text, is_action=True):
+        if not text: return "-"
+        text_str = str(text)
+        
+        if is_action:
+            if text_str == "买入":
+                return html.Span(text_str, style={"color": "#f03e3e"})  # 红色
+            elif text_str == "卖出":
+                return html.Span(text_str, style={"color": "#2f9e44"})  # 绿色
+        else:
+            # 处理“方向预期”的颜色分级
+            if "强烈看多" in text_str or text_str == "看多":
+                return html.Span(text_str, style={"color": "#f03e3e"})  # 红色
+            elif "偏多" in text_str:
+                return html.Span(text_str, style={"color": "#ffb8b8"})  # 淡红色
+            elif "强烈看空" in text_str or text_str == "看空":
+                return html.Span(text_str, style={"color": "#2f9e44"})  # 绿色
+            elif "偏空" in text_str:
+                return html.Span(text_str, style={"color": "#c3ffcd"})  # 淡绿色
+                
+        return text_str
     
     if trigger_id == 'daily-table':
         if not active_cell or active_cell['column_id'] != '详情': return [dash.no_update] * 18
@@ -426,13 +255,13 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
             colors = ['#f03e3e' if row['close'] >= row['open'] else '#2f9e44' for _, row in df_chart.iterrows()]
             fig.add_trace(go.Bar(x=df_chart['date'], y=df_chart['volume'], marker_color=colors, opacity=0.7), row=2, col=1)
             buy_p, sell_p, stop_p = parsed["buy_p"], parsed["sell_p"], parsed["stop_p"]
-            if buy_p and str(buy_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(buy_p), line_dash="dot", line_color="#37b24d", annotation_text="买点", row=1, col=1)
+            if buy_p and str(buy_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(buy_p), line_dash="dot", line_color="#be4bdb", annotation_text="买点", row=1, col=1)
             if sell_p and str(sell_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(sell_p), line_dash="dot", line_color="#f03e3e", annotation_text="目标", row=1, col=1)
-            if stop_p and str(stop_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(stop_p), line_dash="dot", line_color="#be4bdb", annotation_text="止损", row=1, col=1)
+            if stop_p and str(stop_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(stop_p), line_dash="dot", line_color="#37b24d", annotation_text="止损", row=1, col=1)
         fig.update_layout(**layout_cfg)
         fig.update_xaxes(type='category', tickmode='auto', nticks=12)
         
-        return fig, f"{h_stock_name} ({h_stock})", parsed["action"], parsed["expectation"], parsed["pos_adv"], parsed["confidence"], str(parsed["buy_p"]) if parsed["buy_p"] else "-", str(parsed["sell_p"]) if parsed["sell_p"] else "-", str(parsed["stop_p"]) if parsed["stop_p"] else "-", disp_model, parsed["reasoning"], news_t, macro_ui, fin_ui, quant_ui, dash.no_update, dash.no_update, dash.no_update
+        return fig, f"{h_stock_name} ({h_stock})", format_dynamic_color(parsed["action"], True), format_dynamic_color(parsed["expectation"], False), parsed["pos_adv"], parsed["confidence"], str(parsed["buy_p"]) if parsed["buy_p"] else "-", str(parsed["sell_p"]) if parsed["sell_p"] else "-", str(parsed["stop_p"]) if parsed["stop_p"] else "-", disp_model, parsed["reasoning"], news_t, macro_ui, fin_ui, quant_ui, dash.no_update, dash.no_update, dash.no_update
 
     if not stock_code: return [dash.no_update] * 18
     c_date = get_logical_date()
@@ -497,9 +326,9 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     fin_ui, quant_ui, news_t = parse_and_build_fin_and_quant_ui(user_msg)
 
     buy_p, sell_p, stop_p = parsed["buy_p"], parsed["sell_p"], parsed["stop_p"]
-    if buy_p and str(buy_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(buy_p), line_dash="dot", line_color="#37b24d", annotation_text="买点", row=1, col=1)
+    if buy_p and str(buy_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(buy_p), line_dash="dot", line_color="#be4bdb", annotation_text="买点", row=1, col=1)
     if sell_p and str(sell_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(sell_p), line_dash="dot", line_color="#f03e3e", annotation_text="目标", row=1, col=1)
-    if stop_p and str(stop_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(stop_p), line_dash="dot", line_color="#be4bdb", annotation_text="止损", row=1, col=1)
+    if stop_p and str(stop_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(stop_p), line_dash="dot", line_color="#37b24d", annotation_text="止损", row=1, col=1)
 
     rr_str = 'N/A'
     try:
@@ -510,7 +339,7 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
         "股票代码": stock_code, "股票名称": s_name, "决策模型": disp_model, "当前价格": s_price, "预期": parsed["expectation"], "操作": parsed["action"], "建议仓位": parsed["pos_adv"], "置信度": parsed["confidence"], "建议买入价": str(buy_p) if buy_p else "-", "目标卖出价": str(sell_p) if sell_p else "-", "建议止损价": str(stop_p) if stop_p else "-", "回报风险比": rr_str
     }]).to_csv(f"output/{c_str}/Daily Table_{c_str}.csv", index=False, header=not os.path.exists(f"output/{c_str}/Daily Table_{c_str}.csv"), mode='a', encoding='utf-8-sig')
 
-    return fig, f"{s_name} ({stock_code})", parsed["action"], parsed["expectation"], parsed["pos_adv"], parsed["confidence"], str(buy_p) if buy_p else "-", str(sell_p) if sell_p else "-", str(stop_p) if stop_p else "-", disp_model, parsed["reasoning"], news_t, macro_ui, fin_ui, quant_ui, [dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()[:5]], c_str, load_daily_table_by_date(c_str)
+    return fig, f"{s_name} ({stock_code})", format_dynamic_color(parsed["action"], True), format_dynamic_color(parsed["expectation"], False), parsed["pos_adv"], parsed["confidence"], str(buy_p) if buy_p else "-", str(sell_p) if sell_p else "-", str(stop_p) if stop_p else "-", disp_model, parsed["reasoning"], news_t, macro_ui, fin_ui, quant_ui, [dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()[:5]], c_str, load_daily_table_by_date(c_str)
 
 if __name__ == '__main__':
     app.run(debug=True, port=8050)
