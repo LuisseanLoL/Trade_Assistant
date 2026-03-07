@@ -74,7 +74,7 @@ def load_daily_table_by_date(date_str):
     file_path = f"output/{date_str}/Daily Table_{date_str}.csv"
     if os.path.exists(file_path):
         try:
-            df = pd.read_csv(file_path, dtype=str)
+            df = pd.read_csv(file_path, dtype=str, on_bad_lines='skip')
             df['_conf_val'] = df['置信度'].str.replace('%', '', regex=False).astype(float).fillna(0)
             df['_action_rank'] = df['操作'].apply(lambda x: 0 if str(x).strip() == '买入' else 1)
             df = df.sort_values(by=['_action_rank', '_conf_val'], ascending=[True, False]).drop(columns=['_conf_val', '_action_rank'])
