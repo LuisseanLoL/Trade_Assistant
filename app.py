@@ -12,11 +12,15 @@ import re
 import json_repair
 import concurrent.futures
 import glob
+from dotenv import load_dotenv
 
-# 导入您原本的 src 工具模块
+# 加载环境变量
+load_dotenv()
+
+# 导入您原本的 src 工具模块，新增 get_model_config 的导入
 from src.data_crawler import get_stock_data, get_bs_code
 from src.news_crawler import get_news_titles
-from src.LLM_chat import get_LLM_message
+from src.LLM_chat import get_LLM_message, get_model_config
 import baostock as bs
 
 # ==========================================
@@ -112,7 +116,6 @@ def parse_llm_json(result_text):
 def get_index_kline_fig():
     files = glob.glob("log/index_data/sh000001_daily_*.csv")
     fig = go.Figure()
-    # 缩小图表高度以适应新布局
     fig.update_layout(template="plotly_white", margin=dict(l=0, r=0, t=5, b=0), height=120, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', xaxis=dict(visible=False, type='category'), yaxis=dict(visible=False))
     if files:
         try:
@@ -227,13 +230,16 @@ CARD_STYLE = {"backgroundColor": "#ffffff", "border": "none", "borderRadius": "6
 SIDEBAR_STYLE = {"backgroundColor": "#ffffff", "height": "100vh", "padding": "15px", "borderRight": "1px solid #ebedf2", "position": "fixed", "width": "240px", "top": 0, "left": 0, "zIndex": 1000}
 CONTENT_STYLE = {"marginLeft": "240px", "padding": "15px", "backgroundColor": BG_COLOR, "minHeight": "100vh"}
 
-# ================= 选项池定义 =================
-MODEL_OPTIONS = [
-    {'label': 'Gemini Flash', 'value': 'gemini_flash'},
-    {'label': 'Gemini Pro', 'value': 'gemini_pro'},
-    {'label': 'ARK (火山引擎)', 'value': 'ark'},
-    {'label': 'Local (本地开源)', 'value': 'local'}
-]
+# ================= 动态选项池定义 =================
+MODEL_CONFIGS = get_model_config()
+if not MODEL_CONFIGS:
+    MODEL_OPTIONS = [{'label': '未检测到模型，请检查 .env', 'value': 'none'}]
+    default_flash_model = 'none'
+    default_pro_model = 'none'
+else:
+    MODEL_OPTIONS = [{'label': cfg['name'], 'value': mid} for mid, cfg in MODEL_CONFIGS.items()]
+    default_flash_model = MODEL_OPTIONS[0]['value'] if len(MODEL_OPTIONS) > 0 else None
+    default_pro_model = MODEL_OPTIONS[1]['value'] if len(MODEL_OPTIONS) > 1 else default_flash_model
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.LUMEN, dbc.icons.FONT_AWESOME], prevent_initial_callbacks="initial_duplicate")
 app.title = "AI Trade Assistant"
@@ -245,25 +251,22 @@ sidebar = html.Div([
         # --- 标的配置 ---
         html.H6("标的配置", className="text-muted fw-bold mb-2", style={"fontSize": "0.8rem", "letterSpacing": "1px"}),
         html.Label("股票代码", className="small fw-bold text-secondary mb-1"),
-        # 修改点：bs_size="sm" -> size="sm"
         dbc.InputGroup([dbc.Input(id="input-stock-code", type="text", placeholder="输入代码...", size="sm"), dbc.Button(html.I(className="fa-solid fa-dice"), id="btn-random", color="light", title="随机抽取", size="sm")], className="mb-2"),
         
         html.Label("当前持仓", className="small fw-bold text-secondary mb-1 mt-1"),
-        # 修改点：bs_size="sm" -> size="sm"
         dbc.Input(id="input-position", type="number", value=0, className="mb-2", size="sm"),
         html.Label("持仓成本", className="small fw-bold text-secondary mb-1"),
-        # 修改点：bs_size="sm" -> size="sm"
         dbc.Input(id="input-cost", type="number", value=0, className="mb-3", size="sm"),
 
         # --- 模型架构解耦配置 ---
         html.H6("模型解耦配置", className="text-muted fw-bold mb-2", style={"fontSize": "0.8rem", "letterSpacing": "1px"}),
         
         html.Label("1. 基础/初筛模型", className="small fw-bold text-secondary mb-1"),
-        dbc.Select(id="dropdown-flash-model", options=MODEL_OPTIONS, value='gemini_flash', className="mb-2", size="sm"),
+        dbc.Select(id="dropdown-flash-model", options=MODEL_OPTIONS, value=default_flash_model, className="mb-2", size="sm"),
         
         dbc.Checklist(options=[{"label": "2. 启用 Pro 高级模型", "value": 1}], value=[1], id="switch-use-pro", switch=True, className="mb-1 text-secondary small fw-bold"),
         html.Label("选择 Pro 模型", className="small fw-bold text-secondary mb-1"),
-        dbc.Select(id="dropdown-pro-model", options=MODEL_OPTIONS, value='gemini_pro', className="mb-2", size="sm"),
+        dbc.Select(id="dropdown-pro-model", options=MODEL_OPTIONS, value=default_pro_model, className="mb-2", size="sm"),
 
         dbc.Checklist(options=[{"label": "3. 启用双重筛选", "value": 1}], value=[1], id="switch-dual-filter", switch=True, className="mb-3 text-secondary small fw-bold"),
 
@@ -280,7 +283,6 @@ def create_stat_card(title, value_id, color):
 
 content = html.Div([
     dcc.Loading(id="loading-main", type="circle", color="#4c6ef5", children=[
-        # Row 1: 标题 + 日期 + 8个卡片 紧凑排列在同一行
         html.Div([
             html.Div([
                 html.H5("股票智能决策面板", className="fw-bold mb-1", style={"color": "#2d3748", "fontSize": "1.1rem", "whiteSpace": "nowrap"}),
@@ -300,13 +302,11 @@ content = html.Div([
             ], style={"flexGrow": 1, "overflow": "hidden"})
         ], className="d-flex align-items-center mb-2", style={"width": "100%"}),
         
-        # Row 2: 个股K线 (9) + 宏观环境 (3) -> 高度降低
         dbc.Row([
             dbc.Col(dbc.Card([dbc.CardBody([html.H6("实时走势与决策标线 (近半年)", className="fw-bold mb-1", style={"color": "#495057", "fontSize": "0.85rem"}), dcc.Graph(id="main-chart", style={"height": "280px"})], style={"padding": "10px"})], style=CARD_STYLE), width=9),
             dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-globe-asia me-2"), "宏观大盘环境"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-macro", style={"height": "280px"})], style={"padding": "10px"})], style=CARD_STYLE), width=3),
         ], className="gx-2"),
 
-        # Row 3: 核心财务(3) + 量化矩阵(2) + 深度逻辑(4) + 消息动态(3) -> 高度降低
         dbc.Row([
             dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-file-invoice-dollar me-2"), "核心财务指标"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-financial", style={"height": "280px", "overflow": "hidden"})], style={"padding": "10px"})], style=CARD_STYLE), width=3),
             dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-robot me-2"), "量化信号矩阵"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-quant", style={"height": "280px", "overflow": "auto"})], style={"padding": "10px"})], style=CARD_STYLE), width=2),
@@ -318,7 +318,7 @@ content = html.Div([
     html.H6("历史建议日志", className="fw-bold mt-2 mb-2", style={"color": "#2d3748", "fontSize": "0.95rem"}),
     dbc.Card([
         dbc.CardBody([
-            dbc.Tabs(id="date-tabs", active_tab=get_all_output_dates()[0] if get_all_output_dates() else "", children=[dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()[:5]], className="mb-2"), # 默认只显示前5天避免拥挤
+            dbc.Tabs(id="date-tabs", active_tab=get_all_output_dates()[0] if get_all_output_dates() else "", children=[dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()[:5]], className="mb-2"), 
             dash_table.DataTable(
                 id='daily-table',
                 columns=[{"name": i, "id": i} for i in ["股票代码", "股票名称", "当前价格", "预期", "操作", "建议仓位", "置信度", "建议买入价", "目标卖出价", "建议止损价", "回报风险比", "详情"]],
@@ -341,7 +341,7 @@ content = html.Div([
                         'border': '1px solid #4c6ef5'
                     }
                 ],
-                page_size=5 # 分页改小，进一步节省空间
+                page_size=5
             )
         ], style={"padding": "10px"})
     ], style=CARD_STYLE)
@@ -378,20 +378,12 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     if not ctx.triggered: return [dash.no_update] * 17
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
-    # 提取多选开关的状态
     use_pro = bool(use_pro_switch)
     dual_filter = bool(dual_filter_switch)
-
-    # 内部辅助函数：解析模型选项到 API 需要的 choice 和 tier 字段
-    def get_api_params(model_setting, fallback_tier):
-        if model_setting.startswith('gemini_'):
-            return 'gemini', model_setting.split('_')[1]
-        return model_setting, fallback_tier
 
     layout_cfg = dict(template="plotly_white", margin=dict(l=30, r=20, t=10, b=10), hovermode="x unified", xaxis_rangeslider_visible=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', xaxis_type='category')
     fig = go.Figure(layout=layout_cfg)
     
-    # === 历史日志查看逻辑 ===
     if trigger_id == 'daily-table':
         if not active_cell or active_cell['column_id'] != '详情': return [dash.no_update] * 17
         row_data = table_data[active_cell['row']]
@@ -425,12 +417,12 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
         
         return fig, f"{h_stock_name} ({h_stock})", parsed["action"], parsed["expectation"], parsed["pos_adv"], parsed["confidence"], str(parsed["buy_p"]) if parsed["buy_p"] else "-", str(parsed["sell_p"]) if parsed["sell_p"] else "-", str(parsed["stop_p"]) if parsed["stop_p"] else "-", parsed["reasoning"], news_t, macro_ui, fin_ui, quant_ui, dash.no_update, dash.no_update, dash.no_update
 
-    # === 执行全新分析调度逻辑 ===
     if not stock_code: return [dash.no_update] * 17
     c_date = get_logical_date()
     c_str, end, beg = c_date.strftime("%Y-%m-%d"), c_date.isoformat().replace('-', ''), (c_date - timedelta(days=180)).isoformat().replace('-', '')
     stock_code = stock_code.strip()
     s_name = get_stock_name_bs(stock_code)
+    safe_s_name = re.sub(r'[\\/:*?"<>|]', '', s_name)
     
     df_chart = get_chart_data(stock_code, beg, end)
     s_price = df_chart['close'].iloc[-1] if not df_chart.empty else 0
@@ -443,11 +435,11 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     fig.update_xaxes(type='category', tickmode='auto', nticks=12)
 
     in_str = get_stock_data(stock_code=stock_code, beg=beg, end=end, current_date=c_str)
-    news_titles = fetch_news_safely(stock_code, s_name, c_str)
+    news_titles = fetch_news_safely(stock_code, safe_s_name, c_str)
     user_msg = f"""基于获得的以下数据和新闻消息，做出你的交易决策。\n\n{in_str}\n\n最近三十个交易日数据如下：\n{df_chart.tail(30).to_string(index=False) if not df_chart.empty else "暂无"}\n\n相关新闻如下：\n{news_titles}\n\n当前该股持仓：{position} 股\n当前持仓成本: {cost} 元\n\n请记住，行动必须是买入、卖出、持有或观望。\n谨慎考虑交易决策：考虑当前股价是高位还是低位，在低位买入，高位卖出。\n考虑自己的持仓成本，在有足够浮盈的情况下考虑卖出收获现金实利。"""
 
     os.makedirs(f"input/{c_str}", exist_ok=True)
-    with open(f"input/{c_str}/{stock_code}_{s_name}_input_{c_str}.txt", 'w', encoding='utf-8') as f: f.write(user_msg)
+    with open(f"input/{c_str}/{stock_code}_{safe_s_name}_input_{c_str}.txt", 'w', encoding='utf-8') as f: f.write(user_msg)
 
     try:
         with open('LLM system content.txt', 'r', encoding='utf-8') as f: sys_content = f.read()
@@ -456,18 +448,11 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     run_pro = False
     res_text = ""
     
-    # 提取 Flash 对应的底层模型选择
-    f_choice, f_tier = get_api_params(flash_model, 'flash')
-    # 提取 Pro 对应的底层模型选择
-    p_choice, p_tier = get_api_params(pro_model, 'pro')
-    
-    # 核心路由执行树
     if use_pro and dual_filter:
-        if float(position) > 0: # 真实持仓直接跳过初筛
+        if float(position) > 0: 
             run_pro = True
         else:
-            # 执行初筛模型
-            res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_choice=f_choice, model_tier=f_tier)
+            res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=flash_model)
             try:
                 c_text = res_text.replace("“", '"').replace("”", '"')
                 s_idx, e_idx = c_text.find('{'), c_text.rfind('}')
@@ -475,21 +460,18 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
                     action_result = json_repair.loads(c_text[s_idx : e_idx + 1]).get('操作', '')
                     if action_result in ['买入', '卖出', '持有']: run_pro = True
             except: 
-                run_pro = True # JSON解析异常，交给高级模型容错
+                run_pro = True 
     elif use_pro and not dual_filter:
         run_pro = True
     else:
-        # 仅执行初筛模型
-        res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_choice=f_choice, model_tier=f_tier)
+        res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=flash_model)
 
-    # 如果达到触发条件或强制指定，则运行高级模型
     if run_pro: 
-        res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_choice=p_choice, model_tier=p_tier)
+        res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=pro_model)
     
-    # 构建识别后缀以保存
     model_tag = f"D-{flash_model}-{pro_model}" if (run_pro and dual_filter) else (pro_model if run_pro else flash_model)
     os.makedirs(f"output/{c_str}", exist_ok=True)
-    with open(f"output/{c_str}/{stock_code}_{s_name}_output_{model_tag}_{c_str}.txt", 'w', encoding='utf-8') as f: f.write(res_text)
+    with open(f"output/{c_str}/{stock_code}_{safe_s_name}_output_{model_tag}_{c_str}.txt", 'w', encoding='utf-8') as f: f.write(res_text)
 
     parsed = parse_llm_json(res_text)
     macro_ui = parse_and_build_macro_ui(user_msg)

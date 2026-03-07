@@ -117,26 +117,34 @@ with open(r'test\input.txt', 'r', encoding='utf-8') as file:
     user_message = file.read()
 
 
-def gemini_chat(
-        system_content=system_content, 
-        user_message=user_message,
-        model_tier='flash'
-):
-    """处理 Google Gemini 模型的请求，包含高负载重试机制"""
-    if model_tier == 'pro':
-        model = os.getenv("gemini_pro_model", "gemini-3.1-pro-preview")
-        api_key = os.getenv("gemini_pro_api_key")
-        tools = [
-            types.Tool(googleSearch=types.GoogleSearch()),
-        ]
-    else:
-        model = os.getenv("gemini_flash_model", "gemini-3.1-flash-lite-preview")
-        api_key = os.getenv("gemini_flash_api_key")
-        tools = None  # 初筛模型不使用工具，以节省资源和降低复杂度
-
-    client = genai.Client(api_key=api_key)
+def get_model_config():
+    """从环境变量动态加载所有注册的模型配置"""
+    active_models_str = os.getenv("ACTIVE_MODELS", "")
+    if not active_models_str:
+        return {}
     
-    # 仅在有工具时才传入
+    # 提取模型ID列表
+    model_ids = [m.strip() for m in active_models_str.split(",") if m.strip()]
+    configs = {}
+    
+    for mid in model_ids:
+        configs[mid] = {
+            "id": mid,
+            "type": os.getenv(f"{mid}_TYPE", "openai").lower(),  # 'gemini' 还是 'openai' 兼容接口
+            "name": os.getenv(f"{mid}_NAME", mid),               # 显示在前端的名称
+            "model": os.getenv(f"{mid}_MODEL", ""),              # 实际请求的模型代号
+            "api_key": os.getenv(f"{mid}_API_KEY", ""),
+            "base_url": os.getenv(f"{mid}_BASE_URL", None),
+            "strip_think": os.getenv(f"{mid}_STRIP_THINK", "false").lower() == "true",
+            "use_tools": os.getenv(f"{mid}_USE_TOOLS", "false").lower() == "true"
+        }
+    return configs
+
+def gemini_chat(system_content, user_message, model, api_key, use_tools=False):
+    """处理 Google Gemini 模型"""
+    client = genai.Client(api_key=api_key)
+    tools = [types.Tool(googleSearch=types.GoogleSearch())] if use_tools else None
+    
     config_kwargs = {
         "response_mime_type": "text/plain",
         "system_instruction": system_content,
@@ -147,10 +155,8 @@ def gemini_chat(
 
     generate_content_config = types.GenerateContentConfig(**config_kwargs)
 
-    # ================= 核心新增：重试机制 =================
     max_retries = 3
     retry_delay = 30
-
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
@@ -159,27 +165,15 @@ def gemini_chat(
                 config=generate_content_config
             )
             return response.text
-            
         except Exception as e:
             if attempt < max_retries - 1:
-                print(f"⚠️ Gemini API 调用异常 (503高负载或网络错误) - 第 {attempt + 1} 次尝试失败: {e}")
-                print(f"⏳ 等待 {retry_delay} 秒后进行第 {attempt + 2} 次重试...")
+                print(f"⚠️ Gemini API 调用异常 - 第 {attempt + 1} 次尝试失败: {e}")
                 time.sleep(retry_delay)
             else:
-                print(f"❌ Gemini API 连续 {max_retries} 次调用失败，放弃当前请求: {e}")
-                raise e  # 将错误向上抛出，交由 worker.py 外层的 try-except 捕获，从而安全跳过该只股票
+                raise e
 
-
-def openai_chat(
-        system_content=system_content, 
-        user_message=user_message,
-        schema=output_schema,
-        api_key=None,
-        base_url=None,
-        model=None,
-        strip_think=False
-):
-    """统一处理所有兼容 OpenAI 接口规范的模型 (如 Ark, Local, DeepSeek 等)"""
+def openai_chat(system_content, user_message, schema, api_key, base_url, model, strip_think):
+    """统一处理所有兼容 OpenAI 接口规范的模型"""
     client = OpenAI(base_url=base_url, api_key=api_key)
     messages = [
         {"role": "system", "content": system_content},
@@ -193,61 +187,38 @@ def openai_chat(
     )
 
     result = response.choices[0].message.content
-    
-    # 清理深度思考模型的 <think> 标签
     if strip_think:
         result = re.sub(r'<think>.*?</think>', '', str(result), flags=re.DOTALL)
-        
     return result
 
-
-def get_LLM_message(
-        system_content=system_content, 
-        user_message=user_message,
-        model_choice='gemini',
-        model_tier='flash'
-):
+def get_LLM_message(system_content, user_message, model_id):
     """
-    主路由函数，根据选择分发到对应的模型 API
-    model_choice: 'gemini', 'ark', 'local'
-    model_tier: 'flash' (初筛), 'pro' (精决)
+    主路由函数：通过传入的 model_id，动态分发到对应的 API 请求逻辑
     """
+    configs = get_model_config()
+    if model_id not in configs:
+        raise ValueError(f"未找到模型配置: {model_id}。请检查 .env 中的 ACTIVE_MODELS。")
+        
+    config = configs[model_id]
     
-    # 统一使用 output_schema
-    schema = output_schema
-
-    if model_choice == 'gemini':
-        response = gemini_chat(
+    if config['type'] == 'gemini':
+        return gemini_chat(
             system_content=system_content, 
             user_message=user_message, 
-            model_tier=model_tier
+            model=config['model'],
+            api_key=config['api_key'],
+            use_tools=config['use_tools']
         )
         
-    elif model_choice == 'ark':
-        # 火山引擎：环境变量读取，并提供默认值以防报错
-        response = openai_chat(
+    elif config['type'] == 'openai':
+        return openai_chat(
             system_content=system_content, 
             user_message=user_message, 
-            schema=schema,
-            api_key=os.getenv("ark_api_key"),
-            base_url=os.getenv("ark_base_url", "https://ark.cn-beijing.volces.com/api/v3"),
-            model=os.getenv("ark_model"),
-            strip_think=False
+            schema=output_schema,
+            api_key=config['api_key'],
+            base_url=config['base_url'],
+            model=config['model'],
+            strip_think=config['strip_think']
         )
-        
-    elif model_choice == 'local':
-        # 本地模型：读取环境变量，并开启清除 <think> 标签功能
-        response = openai_chat(
-            system_content=system_content, 
-            user_message=user_message, 
-            schema=schema,
-            api_key=os.getenv("local_api_key"),
-            base_url=os.getenv("local_url"),
-            model=os.getenv("local_model"),
-            strip_think=True 
-        )
-        
     else:
-        raise ValueError(f"不支持或未知的模型: {model_choice}。请选择 'gemini', 'ark', 'local' 其中的一个。")
-
-    return response
+        raise ValueError(f"不支持的模型类型: {config['type']}")

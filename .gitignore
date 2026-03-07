@@ -16,6 +16,7 @@ log/
 input/
 output/
 test/
+arena_results/
 
 portfolio.csv
 test.ipynb
