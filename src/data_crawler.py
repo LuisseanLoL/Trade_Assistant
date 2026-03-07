@@ -74,11 +74,20 @@ def calculate_advanced_indicators(df):
     df['high_52w'] = df['最高'].rolling(250).max()
     df['low_52w'] = df['最低'].rolling(250).min()
 
-    # 估值历史分位 (安全判断，兼容大盘指数没有PE/PB的情况)
+    # 估值历史分位计算优化：解决PE跨越0时的数学不连续性陷阱
     if 'peTTM' in df.columns:
-        df['pe_rank'] = df['peTTM'].rank(pct=True) * 100
+        # 将PE转换为EP (Earnings Yield)
+        # 注意处理 PE 为 0 的极端异常情况，防止除以0
+        df['ep'] = np.where(df['peTTM'] == 0, np.nan, 1 / df['peTTM'])
+        
+        # EP越大代表越便宜/基本面越好。
+        # 为了符合大家看PE分位“数值越小越便宜”的习惯，我们对 -EP 进行升序排列
+        df['pe_rank'] = (-df['ep']).rank(pct=True) * 100
+
     if 'pbMRQ' in df.columns:
-        df['pb_rank'] = df['pbMRQ'].rank(pct=True) * 100
+        # 净资产(PB)很少为负，即使为负(资不抵债)，倒数法(BP = 1/PB)同样适用
+        df['bp'] = np.where(df['pbMRQ'] == 0, np.nan, 1 / df['pbMRQ'])
+        df['pb_rank'] = (-df['bp']).rank(pct=True) * 100
 
     # ---------------- 动量计算 (Momentum) ----------------
     df['momentum_1m'] = df['收盘'].pct_change(periods=20)

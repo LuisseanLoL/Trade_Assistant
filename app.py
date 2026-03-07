@@ -74,7 +74,7 @@ def load_daily_table_by_date(date_str):
             df['_conf_val'] = df['置信度'].str.replace('%', '', regex=False).astype(float).fillna(0)
             df['_action_rank'] = df['操作'].apply(lambda x: 0 if str(x).strip() == '买入' else 1)
             df = df.sort_values(by=['_action_rank', '_conf_val'], ascending=[True, False]).drop(columns=['_conf_val', '_action_rank'])
-            df['详情'] = '🔍 查看'
+            df['详情'] = '查看'
             return df.to_dict('records')
         except: pass
     return []
@@ -112,7 +112,8 @@ def parse_llm_json(result_text):
 def get_index_kline_fig():
     files = glob.glob("log/index_data/sh000001_daily_*.csv")
     fig = go.Figure()
-    fig.update_layout(template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=190, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', xaxis=dict(visible=False, type='category'), yaxis=dict(visible=False))
+    # 缩小图表高度以适应新布局
+    fig.update_layout(template="plotly_white", margin=dict(l=0, r=0, t=5, b=0), height=120, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', xaxis=dict(visible=False, type='category'), yaxis=dict(visible=False))
     if files:
         try:
             df = pd.read_csv(max(files)).tail(60) 
@@ -138,17 +139,17 @@ def parse_and_build_macro_ui(input_text):
     
     def mini_kpi(label, val, color="#495057"):
         return html.Div([
-            html.Div(label, style={"fontSize": "0.75rem", "color": "#868e96"}),
-            html.Div(val, style={"fontSize": "1.05rem", "fontWeight": "bold", "color": color})
-        ], style={"backgroundColor": "#f8f9fa", "padding": "8px", "borderRadius": "6px", "textAlign": "center"})
+            html.Div(label, style={"fontSize": "0.7rem", "color": "#868e96"}),
+            html.Div(val, style={"fontSize": "0.95rem", "fontWeight": "bold", "color": color})
+        ], style={"backgroundColor": "#f8f9fa", "padding": "4px", "borderRadius": "4px", "textAlign": "center"})
 
     return html.Div([
         dcc.Graph(figure=get_index_kline_fig(), config={'displayModeBar': False}),
         html.Div([
-            dbc.Row([dbc.Col(mini_kpi("上证指数", idx_val, "#f03e3e"), width=6, className="pe-1"), dbc.Col(mini_kpi("大盘趋势", trend, "#37b24d"), width=6, className="ps-1")], className="mb-2"),
+            dbc.Row([dbc.Col(mini_kpi("上证指数", idx_val, "#f03e3e"), width=6, className="pe-1"), dbc.Col(mini_kpi("大盘趋势", trend, "#37b24d"), width=6, className="ps-1")], className="mb-1"),
             dbc.Row([dbc.Col(mini_kpi("RSI情绪", rsi), width=6, className="pe-1"), dbc.Col(mini_kpi("偏离度", z_score), width=6, className="ps-1")]),
-        ], className="mt-2")
-    ], style={"height": "350px", "display": "flex", "flexDirection": "column", "justifyContent": "space-between"})
+        ], className="mt-1")
+    ], style={"height": "260px", "display": "flex", "flexDirection": "column", "justifyContent": "space-between"})
 
 def parse_and_build_fin_and_quant_ui(input_text):
     fin_dict = {}
@@ -186,35 +187,35 @@ def parse_and_build_fin_and_quant_ui(input_text):
         if key == "总市值": val = format_market_cap(val)
         c = get_color(val) if color_type == 'growth' else "#2d3748"
         return html.Div([
-            html.Div(label, style={"color": "#868e96", "fontSize": "0.7rem", "whiteSpace": "nowrap"}),
-            html.Div(val, style={"color": c, "fontWeight": "bold", "fontSize": "0.85rem", "whiteSpace": "nowrap"})
-        ], className="col-4 mb-2")
+            html.Div(label, style={"color": "#868e96", "fontSize": "0.65rem", "whiteSpace": "nowrap"}),
+            html.Div(val, style={"color": c, "fontWeight": "bold", "fontSize": "0.8rem", "whiteSpace": "nowrap"})
+        ], className="col-4 mb-1")
 
     fin_ui = html.Div([
         html.Div([
-            html.H6("估值与规模", style={"fontSize": "0.75rem", "fontWeight": "bold", "color": "#495057", "marginBottom": "6px"}),
+            html.H6("估值与规模", style={"fontSize": "0.7rem", "fontWeight": "bold", "color": "#495057", "marginBottom": "4px"}),
             dbc.Row([f_item("总市值", "总市值"), f_item("PE(TTM)", "滚动市盈率 P/E(TTM)"), f_item("PE分位", "市盈率(PE)历史分位"), f_item("PB", "市净率 P/B"), f_item("PB分位", "市净率(PB)历史分位"), f_item("PS", "市销率 P/S")], className="gx-1 mb-0"),
-        ], style={"backgroundColor": "#f8f9fa", "padding": "10px", "borderRadius": "6px", "marginBottom": "12px"}),
+        ], style={"backgroundColor": "#f8f9fa", "padding": "6px", "borderRadius": "4px", "marginBottom": "8px"}),
         
         html.Div([
-            html.H6("盈利与成长", style={"fontSize": "0.75rem", "fontWeight": "bold", "color": "#495057", "marginBottom": "6px"}),
+            html.H6("盈利与成长", style={"fontSize": "0.7rem", "fontWeight": "bold", "color": "#495057", "marginBottom": "4px"}),
             dbc.Row([
                 f_item("ROE", "净资产收益率(ROE)", 'growth'), f_item("毛利率", "毛利率", 'growth'), f_item("净利率", "销售净利率", 'growth'), 
                 f_item("营收同比", "营业总收入增长率", 'growth'), f_item("净利同比", "净利润增长率", 'growth'), f_item("负债率", "资产负债率")
             ], className="gx-1 mb-0"),
-        ], style={"backgroundColor": "#f8f9fa", "padding": "10px", "borderRadius": "6px"})
+        ], style={"backgroundColor": "#f8f9fa", "padding": "6px", "borderRadius": "4px"})
     ])
     
     quant_ui = html.Div([
         html.Div([
-            html.Div(k, style={"color": "#495057", "fontSize": "0.85rem", "fontWeight": "bold"}),
+            html.Div(k, style={"color": "#495057", "fontSize": "0.75rem", "fontWeight": "bold"}),
             html.Div([
-                html.Span(f"{v.get('信号', '-')} ", style={"color": "#37b24d" if v.get('信号')=='看空' else "#f03e3e" if v.get('信号') in ['看多','买入'] else "#868e96", "fontWeight": "bold"}),
-                html.Span(f"({v.get('置信度', '-')})", style={"color": "#adb5bd", "fontSize": "0.75rem"})
+                html.Span(f"{v.get('信号', '-')} ", style={"color": "#37b24d" if v.get('信号')=='看空' else "#f03e3e" if v.get('信号') in ['看多','买入'] else "#868e96", "fontWeight": "bold", "fontSize": "0.75rem"}),
+                html.Span(f"({v.get('置信度', '-')})", style={"color": "#adb5bd", "fontSize": "0.7rem"})
             ])
-        ], style={"display": "flex", "justifyContent": "space-between", "borderBottom": "1px solid #f1f3f5", "padding": "8px 0"})
+        ], style={"display": "flex", "justifyContent": "space-between", "borderBottom": "1px solid #f1f3f5", "padding": "4px 0"})
         for k, v in quant_dict.items()
-    ], style={"padding": "0 5px"})
+    ], style={"padding": "0 2px"})
     
     return fin_ui, quant_ui, news_text
 
@@ -222,80 +223,127 @@ def parse_and_build_fin_and_quant_ui(input_text):
 # 界面构建
 # ==========================================
 BG_COLOR = "#f5f6fa"
-CARD_STYLE = {"backgroundColor": "#ffffff", "border": "none", "borderRadius": "8px", "boxShadow": "0 2px 12px rgba(0, 0, 0, 0.04)", "marginBottom": "20px", "padding": "15px"}
-SIDEBAR_STYLE = {"backgroundColor": "#ffffff", "height": "100vh", "padding": "20px", "borderRight": "1px solid #ebedf2", "position": "fixed", "width": "260px", "top": 0, "left": 0, "zIndex": 1000}
-CONTENT_STYLE = {"marginLeft": "280px", "padding": "30px", "backgroundColor": BG_COLOR, "minHeight": "100vh"}
+CARD_STYLE = {"backgroundColor": "#ffffff", "border": "none", "borderRadius": "6px", "boxShadow": "0 1px 6px rgba(0, 0, 0, 0.04)", "marginBottom": "10px"}
+SIDEBAR_STYLE = {"backgroundColor": "#ffffff", "height": "100vh", "padding": "15px", "borderRight": "1px solid #ebedf2", "position": "fixed", "width": "240px", "top": 0, "left": 0, "zIndex": 1000}
+CONTENT_STYLE = {"marginLeft": "240px", "padding": "15px", "backgroundColor": BG_COLOR, "minHeight": "100vh"}
+
+# ================= 选项池定义 =================
+MODEL_OPTIONS = [
+    {'label': 'Gemini Flash', 'value': 'gemini_flash'},
+    {'label': 'Gemini Pro', 'value': 'gemini_pro'},
+    {'label': 'ARK (火山引擎)', 'value': 'ark'},
+    {'label': 'Local (本地开源)', 'value': 'local'}
+]
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.LUMEN, dbc.icons.FONT_AWESOME], prevent_initial_callbacks="initial_duplicate")
 app.title = "AI Trade Assistant"
 
 sidebar = html.Div([
-    html.Div([html.I(className="fa-solid fa-chart-line me-2", style={"color": "#4a5568", "fontSize": "1.5rem"}), html.Span("AI Trade Assistant", style={"fontWeight": "900", "fontSize": "1.3rem", "color": "#2d3748", "letterSpacing": "-0.5px"})], className="d-flex align-items-center mb-5"),
+    html.Div([html.I(className="fa-solid fa-chart-line me-2", style={"color": "#4a5568", "fontSize": "1.3rem"}), html.Span("AI Trade Assistant", style={"fontWeight": "900", "fontSize": "1.1rem", "color": "#2d3748", "letterSpacing": "-0.5px"})], className="d-flex align-items-center mb-4"),
+    
     html.Div([
-        html.H6("策略配置", className="text-muted fw-bold mb-3", style={"fontSize": "0.85rem", "letterSpacing": "1px"}),
+        # --- 标的配置 ---
+        html.H6("标的配置", className="text-muted fw-bold mb-2", style={"fontSize": "0.8rem", "letterSpacing": "1px"}),
         html.Label("股票代码", className="small fw-bold text-secondary mb-1"),
-        dbc.InputGroup([dbc.Input(id="input-stock-code", type="text", placeholder="输入代码..."), dbc.Button(html.I(className="fa-solid fa-dice"), id="btn-random", color="light", title="随机抽取")], className="mb-3"),
-        html.Label("底层模型", className="small fw-bold text-secondary mb-1"),
-        dbc.Select(id="dropdown-model", options=[{'label': 'Gemini (Flash+Pro)', 'value': 'gemini'}, {'label': 'ARK (火山引擎)', 'value': 'ark'}, {'label': 'Local (本地开源)', 'value': 'local'}], value='gemini', className="mb-3"),
-        html.Label("当前持仓", className="small fw-bold text-secondary mb-1"),
-        dbc.Input(id="input-position", type="number", value=0, className="mb-3"),
+        # 修改点：bs_size="sm" -> size="sm"
+        dbc.InputGroup([dbc.Input(id="input-stock-code", type="text", placeholder="输入代码...", size="sm"), dbc.Button(html.I(className="fa-solid fa-dice"), id="btn-random", color="light", title="随机抽取", size="sm")], className="mb-2"),
+        
+        html.Label("当前持仓", className="small fw-bold text-secondary mb-1 mt-1"),
+        # 修改点：bs_size="sm" -> size="sm"
+        dbc.Input(id="input-position", type="number", value=0, className="mb-2", size="sm"),
         html.Label("持仓成本", className="small fw-bold text-secondary mb-1"),
-        dbc.Input(id="input-cost", type="number", value=0, className="mb-4"),
-        dbc.Button("开始分析", id="btn-analyze", color="primary", className="w-100 fw-bold", style={"borderRadius": "6px", "backgroundColor": "#4c6ef5", "border": "none"}),
+        # 修改点：bs_size="sm" -> size="sm"
+        dbc.Input(id="input-cost", type="number", value=0, className="mb-3", size="sm"),
+
+        # --- 模型架构解耦配置 ---
+        html.H6("模型解耦配置", className="text-muted fw-bold mb-2", style={"fontSize": "0.8rem", "letterSpacing": "1px"}),
+        
+        html.Label("1. 基础/初筛模型", className="small fw-bold text-secondary mb-1"),
+        dbc.Select(id="dropdown-flash-model", options=MODEL_OPTIONS, value='gemini_flash', className="mb-2", size="sm"),
+        
+        dbc.Checklist(options=[{"label": "2. 启用 Pro 高级模型", "value": 1}], value=[1], id="switch-use-pro", switch=True, className="mb-1 text-secondary small fw-bold"),
+        html.Label("选择 Pro 模型", className="small fw-bold text-secondary mb-1"),
+        dbc.Select(id="dropdown-pro-model", options=MODEL_OPTIONS, value='gemini_pro', className="mb-2", size="sm"),
+
+        dbc.Checklist(options=[{"label": "3. 启用双重筛选", "value": 1}], value=[1], id="switch-dual-filter", switch=True, className="mb-3 text-secondary small fw-bold"),
+
+        dbc.Button("开始分析", id="btn-analyze", color="primary", className="w-100 fw-bold", size="sm", style={"borderRadius": "4px", "backgroundColor": "#4c6ef5", "border": "none"}),
         html.Div(id="random-msg", className="mt-2 small text-danger")
-    ])
+    ], style={"height": "calc(100vh - 80px)", "overflowY": "auto"})
 ], style=SIDEBAR_STYLE)
 
 def create_stat_card(title, value_id, color):
     return dbc.Col(html.Div([
-        html.Div(title, className="text-muted small fw-bold mb-1", style={"fontSize": "0.75rem", "whiteSpace": "nowrap"}), 
-        html.Div("-", id=value_id, className="fw-bold", style={"fontSize": "1.1rem", "color": color})
-    ], style={"backgroundColor": "#ffffff", "borderRadius": "8px", "boxShadow": "0 2px 8px rgba(0, 0, 0, 0.03)", "padding": "12px", "height": "100%"}), className="col")
+        html.Div(title, className="text-muted small fw-bold mb-0", style={"fontSize": "0.7rem", "whiteSpace": "nowrap"}), 
+        html.Div("-", id=value_id, className="fw-bold", style={"fontSize": "1.0rem", "color": color})
+    ], style={"backgroundColor": "#ffffff", "borderRadius": "6px", "boxShadow": "0 1px 4px rgba(0, 0, 0, 0.03)", "padding": "8px", "height": "100%", "minWidth": "90px"}), className="col px-1")
 
 content = html.Div([
-    html.Div([html.H4("股票策略智能决策面板", className="fw-bold mb-1", style={"color": "#2d3748"}), html.P(f"当前交易日归属: {get_logical_date().strftime('%Y-%m-%d')} (可在日志点击🔍查看穿透历史数据)", className="text-muted small")], className="mb-4"),
-    
     dcc.Loading(id="loading-main", type="circle", color="#4c6ef5", children=[
-        # Row 1: 8 个卡片一字排开
-        dbc.Row([
-            create_stat_card("分析标的", "out-stock-name", "#2d3748"),
-            create_stat_card("策略动作", "out-action", "#4c6ef5"), 
-            create_stat_card("方向预期", "out-expectation", "#845ef7"), 
-            create_stat_card("建议仓位", "out-position", "#f59f00"), 
-            create_stat_card("AI 置信度", "out-confidence", "#e64980"),
-            create_stat_card("建议买入价", "out-buy-price", "#37b24d"), 
-            create_stat_card("目标卖出价", "out-sell-price", "#f03e3e"), 
-            create_stat_card("建议止损价", "out-stop-price", "#be4bdb")
-        ], className="mb-3 gx-2 flex-nowrap", style={"overflowX": "auto"}),
+        # Row 1: 标题 + 日期 + 8个卡片 紧凑排列在同一行
+        html.Div([
+            html.Div([
+                html.H5("股票智能决策面板", className="fw-bold mb-1", style={"color": "#2d3748", "fontSize": "1.1rem", "whiteSpace": "nowrap"}),
+                html.P(f"日期: {get_logical_date().strftime('%Y-%m-%d')}", className="text-muted small mb-0", style={"fontSize": "0.75rem", "whiteSpace": "nowrap"})
+            ], style={"marginRight": "15px", "display": "flex", "flexDirection": "column", "justifyContent": "center"}),
+            html.Div([
+                dbc.Row([
+                    create_stat_card("分析标的", "out-stock-name", "#2d3748"),
+                    create_stat_card("策略动作", "out-action", "#4c6ef5"), 
+                    create_stat_card("方向预期", "out-expectation", "#845ef7"), 
+                    create_stat_card("建议仓位", "out-position", "#f59f00"), 
+                    create_stat_card("AI 置信度", "out-confidence", "#e64980"),
+                    create_stat_card("建议买点", "out-buy-price", "#37b24d"), 
+                    create_stat_card("目标卖点", "out-sell-price", "#f03e3e"), 
+                    create_stat_card("建议止损", "out-stop-price", "#be4bdb")
+                ], className="flex-nowrap", style={"overflowX": "auto", "margin": 0})
+            ], style={"flexGrow": 1, "overflow": "hidden"})
+        ], className="d-flex align-items-center mb-2", style={"width": "100%"}),
         
-        # Row 2: 个股K线 (9) + 宏观环境 (3)
+        # Row 2: 个股K线 (9) + 宏观环境 (3) -> 高度降低
         dbc.Row([
-            dbc.Col(dbc.Card([dbc.CardBody([html.H6("实时走势与决策标线 (近半年)", className="fw-bold mb-3", style={"color": "#495057"}), dcc.Graph(id="main-chart", style={"height": "340px"})])], style=CARD_STYLE), width=9),
-            dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-globe-asia me-2"), "宏观大盘环境"], className="fw-bold mb-3 text-secondary"), html.Div(id="out-macro", style={"height": "340px"})])], style=CARD_STYLE), width=3),
-        ]),
+            dbc.Col(dbc.Card([dbc.CardBody([html.H6("实时走势与决策标线 (近半年)", className="fw-bold mb-1", style={"color": "#495057", "fontSize": "0.85rem"}), dcc.Graph(id="main-chart", style={"height": "280px"})], style={"padding": "10px"})], style=CARD_STYLE), width=9),
+            dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-globe-asia me-2"), "宏观大盘环境"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-macro", style={"height": "280px"})], style={"padding": "10px"})], style=CARD_STYLE), width=3),
+        ], className="gx-2"),
 
-        # Row 3: 核心财务(3) + 量化矩阵(2) + 深度逻辑(4) + 消息动态(3)
+        # Row 3: 核心财务(3) + 量化矩阵(2) + 深度逻辑(4) + 消息动态(3) -> 高度降低
         dbc.Row([
-            dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-file-invoice-dollar me-2"), "核心财务指标"], className="fw-bold mb-3 text-secondary"), html.Div(id="out-financial", style={"height": "280px", "overflow": "hidden"})])], style=CARD_STYLE), width=3),
-            dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-robot me-2"), "量化信号矩阵"], className="fw-bold mb-3 text-secondary"), html.Div(id="out-quant", style={"height": "280px", "overflow": "hidden"})])], style=CARD_STYLE), width=2),
-            dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-brain me-2"), "AI 深度逻辑推演"], className="fw-bold mb-3 text-secondary"), html.Div(id="out-reasoning", style={"height": "280px", "overflow-y": "auto", "fontSize": "0.85rem", "color": "#495057", "whiteSpace": "pre-wrap", "lineHeight": "1.6"})])], style=CARD_STYLE), width=4),
-            dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-newspaper me-2"), "消息面动态"], className="fw-bold mb-3 text-secondary"), html.Div(id="out-news", style={"height": "280px", "overflow-y": "auto", "fontSize": "0.8rem", "color": "#868e96", "whiteSpace": "pre-wrap"})])], style=CARD_STYLE), width=3),
-        ])
+            dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-file-invoice-dollar me-2"), "核心财务指标"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-financial", style={"height": "280px", "overflow": "hidden"})], style={"padding": "10px"})], style=CARD_STYLE), width=3),
+            dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-robot me-2"), "量化信号矩阵"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-quant", style={"height": "280px", "overflow": "auto"})], style={"padding": "10px"})], style=CARD_STYLE), width=2),
+            dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-brain me-2"), "AI 深度逻辑推演"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-reasoning", style={"height": "280px", "overflow-y": "auto", "fontSize": "0.8rem", "color": "#495057", "whiteSpace": "pre-wrap", "lineHeight": "1.5"})], style={"padding": "10px"})], style=CARD_STYLE), width=4),
+            dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-newspaper me-2"), "消息面动态"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-news", style={"height": "280px", "overflow-y": "auto", "fontSize": "0.75rem", "color": "#868e96", "whiteSpace": "pre-wrap"})], style={"padding": "10px"})], style=CARD_STYLE), width=3),
+        ], className="gx-2")
     ]),
 
-    html.H5("历史建议日志", className="fw-bold mt-4 mb-3", style={"color": "#2d3748"}),
+    html.H6("历史建议日志", className="fw-bold mt-2 mb-2", style={"color": "#2d3748", "fontSize": "0.95rem"}),
     dbc.Card([
         dbc.CardBody([
-            dbc.Tabs(id="date-tabs", active_tab=get_all_output_dates()[0] if get_all_output_dates() else "", children=[dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()], className="mb-3"),
+            dbc.Tabs(id="date-tabs", active_tab=get_all_output_dates()[0] if get_all_output_dates() else "", children=[dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()[:5]], className="mb-2"), # 默认只显示前5天避免拥挤
             dash_table.DataTable(
                 id='daily-table',
                 columns=[{"name": i, "id": i} for i in ["股票代码", "股票名称", "当前价格", "预期", "操作", "建议仓位", "置信度", "建议买入价", "目标卖出价", "建议止损价", "回报风险比", "详情"]],
-                style_table={'overflowX': 'auto', 'minWidth': '100%'}, style_cell={'backgroundColor': '#ffffff', 'color': '#495057', 'textAlign': 'center', 'border': 'none', 'borderBottom': '1px solid #f1f3f5', 'padding': '12px 10px', 'fontSize': '0.9rem'},
-                style_header={'backgroundColor': '#f8f9fa', 'fontWeight': 'bold', 'color': '#868e96', 'borderBottom': '2px solid #e9ecef'},
-                style_data_conditional=[{'if': {'filter_query': '{操作} = "买入"'}, 'color': '#f03e3e', 'fontWeight': 'bold'}, {'if': {'filter_query': '{操作} = "卖出"'}, 'color': '#2f9e44', 'fontWeight': 'bold'}, {'if': {'column_id': '详情'}, 'cursor': 'pointer', 'color': '#4c6ef5', 'fontWeight': 'bold', 'textDecoration': 'underline'}],
-                page_size=10
+                style_table={'overflowX': 'auto', 'minWidth': '100%'}, 
+                style_cell={'backgroundColor': '#ffffff', 'color': '#495057', 'textAlign': 'center', 'border': 'none', 'borderBottom': '1px solid #f1f3f5', 'padding': '8px', 'fontSize': '0.8rem'},
+                style_header={'backgroundColor': '#f8f9fa', 'fontWeight': 'bold', 'color': '#868e96', 'borderBottom': '2px solid #e9ecef', 'padding': '8px'},
+                style_data_conditional=[
+                    {'if': {'filter_query': '{操作} = "买入"'}, 'color': '#f03e3e', 'fontWeight': 'bold'},
+                    {'if': {'filter_query': '{操作} = "卖出"'}, 'color': '#2f9e44', 'fontWeight': 'bold'},
+                    {
+                        'if': {'column_id': '详情'},
+                        'cursor': 'pointer',
+                        'color': '#4c6ef5',
+                        'fontWeight': 'bold',
+                        'backgroundColor': '#f0f4ff',
+                    },
+                    {
+                        'if': {'column_id': '详情', 'state': 'active'},
+                        'backgroundColor': '#dce4ff',
+                        'border': '1px solid #4c6ef5'
+                    }
+                ],
+                page_size=5 # 分页改小，进一步节省空间
             )
-        ])
+        ], style={"padding": "10px"})
     ], style=CARD_STYLE)
 ], style=CONTENT_STYLE)
 
@@ -314,29 +362,40 @@ def handle_random_pick(n_clicks):
 def update_table(active_tab): return load_daily_table_by_date(active_tab) if active_tab else []
 
 @app.callback(
-    [Output("main-chart", "figure"), 
-     Output("out-stock-name", "children"),
+    [Output("main-chart", "figure"), Output("out-stock-name", "children"),
      Output("out-action", "children"), Output("out-expectation", "children"), Output("out-position", "children"), Output("out-confidence", "children"),
      Output("out-buy-price", "children"), Output("out-sell-price", "children"), Output("out-stop-price", "children"), Output("out-reasoning", "children"), Output("out-news", "children"), 
      Output("out-macro", "children"), Output("out-financial", "children"), Output("out-quant", "children"), 
      Output("date-tabs", "children"), Output("date-tabs", "active_tab", allow_duplicate=True), Output("daily-table", "data", allow_duplicate=True)], 
     [Input("btn-analyze", "n_clicks"), Input("daily-table", "active_cell")],
-    [State("input-stock-code", "value"), State("dropdown-model", "value"), State("input-position", "value"), State("input-cost", "value"), State("daily-table", "data"), State("date-tabs", "active_tab")],
+    [State("input-stock-code", "value"), 
+     State("dropdown-flash-model", "value"), State("switch-use-pro", "value"), State("dropdown-pro-model", "value"), State("switch-dual-filter", "value"),
+     State("input-position", "value"), State("input-cost", "value"), State("daily-table", "data"), State("date-tabs", "active_tab")],
     prevent_initial_call=True
 )
-def unified_action_handler(n_clicks, active_cell, stock_code, model_choice, position, cost, table_data, active_tab):
+def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_pro_switch, pro_model, dual_filter_switch, position, cost, table_data, active_tab):
     ctx = dash.callback_context
     if not ctx.triggered: return [dash.no_update] * 17
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
+    # 提取多选开关的状态
+    use_pro = bool(use_pro_switch)
+    dual_filter = bool(dual_filter_switch)
+
+    # 内部辅助函数：解析模型选项到 API 需要的 choice 和 tier 字段
+    def get_api_params(model_setting, fallback_tier):
+        if model_setting.startswith('gemini_'):
+            return 'gemini', model_setting.split('_')[1]
+        return model_setting, fallback_tier
+
     layout_cfg = dict(template="plotly_white", margin=dict(l=30, r=20, t=10, b=10), hovermode="x unified", xaxis_rangeslider_visible=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', xaxis_type='category')
     fig = go.Figure(layout=layout_cfg)
     
+    # === 历史日志查看逻辑 ===
     if trigger_id == 'daily-table':
         if not active_cell or active_cell['column_id'] != '详情': return [dash.no_update] * 17
         row_data = table_data[active_cell['row']]
-        h_stock, h_date = row_data['股票代码'], active_tab
-        h_stock_name = row_data.get('股票名称', '未知')
+        h_stock, h_date, h_stock_name = row_data['股票代码'], active_tab, row_data.get('股票名称', '未知')
         
         in_fs, out_fs = glob.glob(f"input/{h_date}/{h_stock}_*_input_{h_date}.txt"), glob.glob(f"output/{h_date}/{h_stock}_*_output_*_{h_date}.txt")
         if not in_fs or not out_fs: return fig, f"{h_stock_name} ({h_stock})", "-", "-", "-", "-", "-", "-", "-", "未能找到历史文本文件！", "-", "-", "-", "-", dash.no_update, dash.no_update, dash.no_update
@@ -348,8 +407,7 @@ def unified_action_handler(n_clicks, active_cell, stock_code, model_choice, posi
         fin_ui, quant_ui, news_t = parse_and_build_fin_and_quant_ui(h_in)
         parsed = parse_llm_json(h_out)
         
-        beg = (datetime.strptime(h_date, "%Y-%m-%d") - timedelta(days=180)).strftime("%Y%m%d")
-        end = h_date.replace('-', '')
+        beg, end = (datetime.strptime(h_date, "%Y-%m-%d") - timedelta(days=180)).strftime("%Y%m%d"), h_date.replace('-', '')
         df_chart = get_chart_data(h_stock, beg, end)
         
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.75, 0.25])
@@ -367,6 +425,7 @@ def unified_action_handler(n_clicks, active_cell, stock_code, model_choice, posi
         
         return fig, f"{h_stock_name} ({h_stock})", parsed["action"], parsed["expectation"], parsed["pos_adv"], parsed["confidence"], str(parsed["buy_p"]) if parsed["buy_p"] else "-", str(parsed["sell_p"]) if parsed["sell_p"] else "-", str(parsed["stop_p"]) if parsed["stop_p"] else "-", parsed["reasoning"], news_t, macro_ui, fin_ui, quant_ui, dash.no_update, dash.no_update, dash.no_update
 
+    # === 执行全新分析调度逻辑 ===
     if not stock_code: return [dash.no_update] * 17
     c_date = get_logical_date()
     c_str, end, beg = c_date.strftime("%Y-%m-%d"), c_date.isoformat().replace('-', ''), (c_date - timedelta(days=180)).isoformat().replace('-', '')
@@ -394,20 +453,43 @@ def unified_action_handler(n_clicks, active_cell, stock_code, model_choice, posi
         with open('LLM system content.txt', 'r', encoding='utf-8') as f: sys_content = f.read()
     except: sys_content = "你是一个专业的量化交易AI..."
         
-    need_pro = float(position) > 0
+    run_pro = False
     res_text = ""
-    if not need_pro:
-        res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_choice=model_choice, model_tier='flash')
-        try:
-            c_text = res_text.replace("“", '"').replace("”", '"')
-            s_idx, e_idx = c_text.find('{'), c_text.rfind('}')
-            if s_idx != -1 and e_idx != -1 and json_repair.loads(c_text[s_idx : e_idx + 1]).get('操作', '') in ['买入', '卖出', '持有']: need_pro = True
-        except: need_pro = True
-
-    if need_pro and model_choice == 'gemini': res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_choice=model_choice, model_tier='pro')
     
+    # 提取 Flash 对应的底层模型选择
+    f_choice, f_tier = get_api_params(flash_model, 'flash')
+    # 提取 Pro 对应的底层模型选择
+    p_choice, p_tier = get_api_params(pro_model, 'pro')
+    
+    # 核心路由执行树
+    if use_pro and dual_filter:
+        if float(position) > 0: # 真实持仓直接跳过初筛
+            run_pro = True
+        else:
+            # 执行初筛模型
+            res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_choice=f_choice, model_tier=f_tier)
+            try:
+                c_text = res_text.replace("“", '"').replace("”", '"')
+                s_idx, e_idx = c_text.find('{'), c_text.rfind('}')
+                if s_idx != -1 and e_idx != -1:
+                    action_result = json_repair.loads(c_text[s_idx : e_idx + 1]).get('操作', '')
+                    if action_result in ['买入', '卖出', '持有']: run_pro = True
+            except: 
+                run_pro = True # JSON解析异常，交给高级模型容错
+    elif use_pro and not dual_filter:
+        run_pro = True
+    else:
+        # 仅执行初筛模型
+        res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_choice=f_choice, model_tier=f_tier)
+
+    # 如果达到触发条件或强制指定，则运行高级模型
+    if run_pro: 
+        res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_choice=p_choice, model_tier=p_tier)
+    
+    # 构建识别后缀以保存
+    model_tag = f"D-{flash_model}-{pro_model}" if (run_pro and dual_filter) else (pro_model if run_pro else flash_model)
     os.makedirs(f"output/{c_str}", exist_ok=True)
-    with open(f"output/{c_str}/{stock_code}_{s_name}_output_{model_choice}_{c_str}.txt", 'w', encoding='utf-8') as f: f.write(res_text)
+    with open(f"output/{c_str}/{stock_code}_{s_name}_output_{model_tag}_{c_str}.txt", 'w', encoding='utf-8') as f: f.write(res_text)
 
     parsed = parse_llm_json(res_text)
     macro_ui = parse_and_build_macro_ui(user_msg)
@@ -427,7 +509,7 @@ def unified_action_handler(n_clicks, active_cell, stock_code, model_choice, posi
         "股票代码": stock_code, "股票名称": s_name, "当前价格": s_price, "预期": parsed["expectation"], "操作": parsed["action"], "建议仓位": parsed["pos_adv"], "置信度": parsed["confidence"], "建议买入价": str(buy_p) if buy_p else "-", "目标卖出价": str(sell_p) if sell_p else "-", "建议止损价": str(stop_p) if stop_p else "-", "回报风险比": rr_str
     }]).to_csv(f"output/{c_str}/Daily Table_{c_str}.csv", index=False, header=not os.path.exists(f"output/{c_str}/Daily Table_{c_str}.csv"), mode='a', encoding='utf-8-sig')
 
-    return fig, f"{s_name} ({stock_code})", parsed["action"], parsed["expectation"], parsed["pos_adv"], parsed["confidence"], str(buy_p) if buy_p else "-", str(sell_p) if sell_p else "-", str(stop_p) if stop_p else "-", parsed["reasoning"], news_t, macro_ui, fin_ui, quant_ui, [dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()], c_str, load_daily_table_by_date(c_str)
+    return fig, f"{s_name} ({stock_code})", parsed["action"], parsed["expectation"], parsed["pos_adv"], parsed["confidence"], str(buy_p) if buy_p else "-", str(sell_p) if sell_p else "-", str(stop_p) if stop_p else "-", parsed["reasoning"], news_t, macro_ui, fin_ui, quant_ui, [dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()[:5]], c_str, load_daily_table_by_date(c_str)
 
 if __name__ == '__main__':
     app.run(debug=True, port=8050)
