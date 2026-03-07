@@ -143,4 +143,15 @@ def parse_and_build_fin_and_quant_ui(input_text):
         for k, v in quant_dict.items()
     ], style={"padding": "0 2px"})
     
-    return fin_ui, quant_ui, news_text
+    # 格式化新闻文本
+    formatted_news = []
+    if news_text and news_text != "暂无新闻数据":
+        for line in news_text.split('\n'):
+            line = line.strip()
+            if line:
+                # 给每条新闻加个小圆点前缀和底边距
+                formatted_news.append(html.Div(["• ", line], style={"marginBottom": "6px", "lineHeight": "1.4"}))
+    else:
+        formatted_news = "暂无新闻数据"
+        
+    return fin_ui, quant_ui, formatted_news

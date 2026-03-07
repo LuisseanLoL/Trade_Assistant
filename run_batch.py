@@ -3,10 +3,13 @@ import os
 import random
 import pandas as pd
 import questionary
-from questionary import Choice  # 引入 Choice 对象进行强绑定
+from questionary import Choice
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
+
+# 引入核心工作流和最新架构需要的工具
 from src.worker import process, SHOULD_SKIP
+from src.LLM_chat import get_model_config
 
 # 在所有逻辑开始前，强制加载根目录的 .env 文件
 load_dotenv()
@@ -51,16 +54,15 @@ def main():
     beg = start_date.isoformat().replace('-', '')
 
     # ==========================================
-    # 2. 交互式配置参数区 (使用 questionary 上下键菜单)
+    # 2. 交互式配置参数区 
     # ==========================================
-    print("\n" + "="*45)
-    print("🤖 AI Quant Agent - 交互式启动菜单")
-    print("="*45 + "\n")
+    print("\n" + "="*50)
+    print("🤖 AI Quant Agent - 批量分析启动终端")
+    print("="*50 + "\n")
 
-    # --- 选择运行模式 ---
-    # 使用 Choice 对象，强绑定 UI 文本与后台的 True/False 逻辑
+    # --- 2.1 选择运行模式 ---
     is_random_mode = questionary.select(
-        "【步骤 1】请选择选股模式：",
+        "【步骤 1】请选择批量选股模式：",
         choices=[
             Choice("1. 指定股票池 (手动输入需要分析的代码)", value=False),
             Choice("2. 随机抽盲盒 (从全市场自动抽取未分析标的)", value=True)
@@ -68,7 +70,6 @@ def main():
         pointer="👉"
     ).ask()
 
-    # 如果用户按 Ctrl+C 退出
     if is_random_mode is None:
         print("👋 已取消运行。")
         return
@@ -82,47 +83,61 @@ def main():
     if USE_RANDOM_BATCH:
         size_input = questionary.text(
             "请输入需要随机抽取的股票数量:", 
-            default="1"
+            default="5"
         ).ask()
         
-        if size_input is None:
-            print("👋 已取消运行。")
-            return
-            
+        if size_input is None: return
         if size_input.strip().isdigit():
             SAMPLE_SIZE = int(size_input.strip())
     else:
-        # 取消了默认值，强制要求用户输入代码
         stocks_input = ""
         while not stocks_input:
             stocks_input = questionary.text("请输入股票代码 (多个代码用空格分隔):").ask()
-            
-            if stocks_input is None:
-                print("👋 已取消运行。")
-                return
-                
+            if stocks_input is None: return
             stocks_input = stocks_input.strip()
             if not stocks_input:
                 print("⚠️ 股票代码不能为空，请重新输入！")
-                
         SPECIFIC_BATCH = stocks_input.split()
 
-    # --- 选择调用模型 ---
-    model_choice = questionary.select(
-        "【步骤 2】请选择大模型底层架构：",
-        choices=[
-            Choice("1. Gemini (双模型漏斗架构: Flash粗筛 + Pro精决)", value='gemini'),
-            Choice("2. ARK (火山引擎)", value='ark'),
-            Choice("3. Local (本地开源模型)", value='local')
-        ],
-        pointer="👉"
-    ).ask()
-
-    if model_choice is None:
-        print("👋 已取消运行。")
+    # --- 2.2 动态加载模型并配置双筛漏斗 ---
+    model_configs = get_model_config()
+    if not model_configs:
+        print("\n❌ 未检测到可用的模型配置，请检查 .env 文件中的 ACTIVE_MODELS 字段！")
         return
 
-    print("\n" + "="*45 + "\n")
+    model_choices = [Choice(cfg['name'], value=mid) for mid, cfg in model_configs.items()]
+
+    flash_model = questionary.select(
+        "【步骤 2】请选择基础/初筛模型 (Flash Model)：",
+        choices=model_choices,
+        pointer="👉"
+    ).ask()
+    if flash_model is None: return
+
+    use_pro = questionary.confirm(
+        "【步骤 3】是否启用 Pro 高级模型进行深度测算？", 
+        default=True
+    ).ask()
+    if use_pro is None: return
+
+    pro_model = flash_model
+    dual_filter = False
+
+    if use_pro:
+        pro_model = questionary.select(
+            "【步骤 3.1】请选择高级复核模型 (Pro Model)：",
+            choices=model_choices,
+            pointer="👉"
+        ).ask()
+        if pro_model is None: return
+
+        dual_filter = questionary.confirm(
+            "【步骤 3.2】是否启用双重筛选 (仅空仓且初筛触发动作时才调用 Pro)(默认为是）？", 
+            default=True
+        ).ask()
+        if dual_filter is None: return
+
+    print("\n" + "="*50 + "\n")
 
     # ==========================================
     # 3. 构建待分析的股票池 (Batch)
@@ -152,12 +167,12 @@ def main():
 
                 actual_sample_size = min(SAMPLE_SIZE, len(all_codes))
                 batch = random.sample(all_codes, actual_sample_size)
-                print(f"🎲 [随机模式] 成功从 '{RANDOM_CSV_PATH}' 中随机抽取了 {actual_sample_size} 只未处理过的股票。")
+                print(f"🎲 [随机模式] 成功从全市场池中抽取了 {actual_sample_size} 只未处理过的标的。")
             except Exception as e:
-                print(f"❌ 读取随机股票池失败: {e}。将自动回退到指定股票池模式。")
+                print(f"❌ 读取随机股票池失败: {e}。自动回退到指定股票池模式。")
                 batch = SPECIFIC_BATCH
         else:
-            print(f"⚠️ 找不到全量代码文件 '{RANDOM_CSV_PATH}'。将自动回退到指定股票池模式。")
+            print(f"⚠️ 找不到全量代码文件 '{RANDOM_CSV_PATH}'。自动回退到指定股票池模式。")
             batch = SPECIFIC_BATCH
     else:
         print("🎯 [指定模式] 将分析你手动输入的特定股票。")
@@ -165,15 +180,18 @@ def main():
 
     portfolio_data = load_portfolio("portfolio.csv")
 
-    print(f"\n=== 🚀 开始量化分析任务 ===")
-    print(f"使用的模型: {model_choice.upper()}")
+    print(f"\n=== 🚀 开始量化批量分析任务 ===")
     print(f"逻辑归属日期: {current_date}")
+    print(f"初筛模型: {flash_model} | 高级模型: {pro_model if use_pro else '未启用'} | 双筛架构: {'启用' if dual_filter else '关闭'}")
     print(f"最终待分析股票池 ({len(batch)}只): {batch}")
     print("===================================\n")
 
     # ==========================================
     # 4. 循环执行区
     # ==========================================
+    success_count = 0
+    skip_count = 0
+
     for code in batch:
         pos_info = portfolio_data.get(code, {'position': 0.0, 'cost': 0.0})
         current_position = pos_info['position']
@@ -182,6 +200,7 @@ def main():
         print(f">>> 开始处理股票: {code} | 当前持仓: {current_position} 股 | 成本: {current_cost} 元")
         
         try:
+            # 调用最新的 worker.process，并传入模型解耦参数
             processed_result = process(
                 stock_code=code,
                 stock_position=current_position,
@@ -189,18 +208,24 @@ def main():
                 beg=beg,
                 end=end,
                 current_date=current_date,
-                model_choice=model_choice
+                flash_model=flash_model,
+                use_pro=use_pro,
+                pro_model=pro_model,
+                dual_filter=dual_filter
             )
 
             if processed_result is SHOULD_SKIP:
-                print(f"⚠️ 已跳过 {code}。\n")
+                print(f"⚠️ 已跳过 {code}（可能由于初筛无交易价值或数据获取失败）。\n")
+                skip_count += 1
             else:
-                print(f"✅ {code} 处理成功。\n")
+                print(f"✅ {code} 处理成功并已落库。\n")
+                success_count += 1
 
         except Exception as e:
             print(f"❌ 处理 {code} 时发生严重异常: {e}\n")
+            skip_count += 1
 
-    print("--- 🏁 所有项目处理完毕 ---")
+    print(f"--- 🏁 批量处理完毕！成功: {success_count} 只，跳过/失败: {skip_count} 只 ---")
 
 if __name__ == "__main__":
     main()

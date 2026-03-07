@@ -117,7 +117,7 @@ content = html.Div([
         dbc.Row([
             dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-file-invoice-dollar me-2"), "核心财务指标"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-financial", style={"height": "280px", "overflow": "hidden"})], style={"padding": "10px"})], style=CARD_STYLE), width=3),
             dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-robot me-2"), "量化信号矩阵"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-quant", style={"height": "280px", "overflow": "auto"})], style={"padding": "10px"})], style=CARD_STYLE), width=2),
-            dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-brain me-2"), "AI 深度逻辑推演"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-reasoning", style={"height": "280px", "overflow-y": "auto", "fontSize": "0.8rem", "color": "#495057", "whiteSpace": "pre-wrap", "lineHeight": "1.5"})], style={"padding": "10px"})], style=CARD_STYLE), width=4),
+            dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-brain me-2"), "AI 深度逻辑推演"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), dcc.Markdown(id="out-reasoning", style={"height": "280px", "overflow-y": "auto", "fontSize": "0.8rem", "color": "#495057", "whiteSpace": "pre-wrap", "lineHeight": "1.5"})], style={"padding": "10px"})], style=CARD_STYLE), width=4),
             dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-newspaper me-2"), "消息面动态"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-news", style={"height": "280px", "overflow-y": "auto", "fontSize": "0.75rem", "color": "#868e96", "whiteSpace": "pre-wrap"})], style={"padding": "10px"})], style=CARD_STYLE), width=3),
         ], className="gx-2")
     ]),
@@ -178,7 +178,7 @@ def update_table(active_tab): return load_daily_table_by_date(active_tab) if act
     [Input("btn-analyze", "n_clicks"), Input("daily-table", "active_cell")],
     [State("input-stock-code", "value"), 
      State("dropdown-flash-model", "value"), State("switch-use-pro", "value"), State("dropdown-pro-model", "value"), State("switch-dual-filter", "value"),
-     State("input-position", "value"), State("input-cost", "value"), State("daily-table", "data"), State("date-tabs", "active_tab")],
+     State("input-position", "value"), State("input-cost", "value"), State("daily-table", "derived_viewport_data"), State("date-tabs", "active_tab")],
     prevent_initial_call=True
 )
 def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_pro_switch, pro_model, dual_filter_switch, position, cost, table_data, active_tab):
@@ -189,7 +189,7 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     use_pro = bool(use_pro_switch)
     dual_filter = bool(dual_filter_switch)
 
-    layout_cfg = dict(template="plotly_white", margin=dict(l=30, r=20, t=10, b=10), hovermode="x unified", xaxis_rangeslider_visible=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', xaxis_type='category')
+    layout_cfg = dict(template="plotly_white", margin=dict(l=30, r=20, t=10, b=10), hovermode="x unified", xaxis_rangeslider_visible=False, showlegend=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', xaxis_type='category')
     fig = go.Figure(layout=layout_cfg)
 
     def get_display_model_name(tag):

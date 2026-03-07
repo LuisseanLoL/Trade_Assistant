@@ -122,7 +122,8 @@ def process(stock_code = '600325',
             run_pro = True
         else:
             print(f"\n📡 [{stock_code}] 正在使用基础漏斗 {flash_model} 进行初筛...")
-            result = get_LLM_message(system_content=system_content, user_message=user_message, model_choice=flash_model, model_tier='flash')
+            # 💡 修正点 1：将 model_choice 替换为 model_id，并移除多余的 model_tier
+            result = get_LLM_message(system_content=system_content, user_message=user_message, model_id=flash_model)
             try:
                 temp_text = result.replace("“", '"').replace("”", '"')
                 s_idx, e_idx = temp_text.find('{'), temp_text.rfind('}')
@@ -142,10 +143,12 @@ def process(stock_code = '600325',
         run_pro = True
     else:
         print(f"\n📡 [{stock_code}] 模式设定为仅使用基础模型 ({flash_model})...")
-        result = get_LLM_message(system_content=system_content, user_message=user_message, model_choice=flash_model, model_tier='flash')
+        # 💡 修正点 2：将 model_choice 替换为 model_id
+        result = get_LLM_message(system_content=system_content, user_message=user_message, model_id=flash_model)
 
     if run_pro:
-         result = get_LLM_message(system_content=system_content, user_message=user_message, model_choice=pro_model, model_tier='pro')
+         # 💡 修正点 3：将 model_choice 替换为 model_id
+         result = get_LLM_message(system_content=system_content, user_message=user_message, model_id=pro_model)
          print("✅ 深度测算与复核完成！")
 
     output_dir = f"output/{current_date}"
