@@ -24,7 +24,8 @@ from src.utils import (
     get_all_output_dates, 
     load_daily_table_by_date, 
     get_random_unprocessed_stock, 
-    parse_llm_json
+    parse_llm_json,
+    create_advanced_kline_fig
 )
 from src.ui_components import parse_and_build_macro_ui, parse_and_build_fin_and_quant_ui
 
@@ -33,8 +34,8 @@ from src.ui_components import parse_and_build_macro_ui, parse_and_build_fin_and_
 # ==========================================
 BG_COLOR = "#f5f6fa"
 CARD_STYLE = {"backgroundColor": "#ffffff", "border": "none", "borderRadius": "6px", "boxShadow": "0 1px 6px rgba(0, 0, 0, 0.04)", "marginBottom": "10px"}
-SIDEBAR_STYLE = {"backgroundColor": "#ffffff", "height": "100vh", "padding": "15px", "borderRight": "1px solid #ebedf2", "position": "fixed", "width": "240px", "top": 0, "left": 0, "zIndex": 1000}
-CONTENT_STYLE = {"marginLeft": "240px", "padding": "15px", "backgroundColor": BG_COLOR, "minHeight": "100vh"}
+SIDEBAR_STYLE = {"backgroundColor": "#ffffff", "height": "100vh", "padding": "15px", "borderRight": "1px solid #ebedf2", "position": "fixed", "width": "280px", "top": 0, "left": 0, "zIndex": 1000}
+CONTENT_STYLE = {"marginLeft": "280px", "padding": "15px", "backgroundColor": BG_COLOR, "minHeight": "100vh"}
 
 # ================= 动态选项池定义 =================
 MODEL_CONFIGS = get_model_config()
@@ -110,15 +111,42 @@ content = html.Div([
         ], className="d-flex align-items-center mb-2", style={"width": "100%"}),
         
         dbc.Row([
-            dbc.Col(dbc.Card([dbc.CardBody([html.H6("实时走势与决策标线 (近半年)", className="fw-bold mb-1", style={"color": "#495057", "fontSize": "0.85rem"}), dcc.Graph(id="main-chart", style={"height": "280px"})], style={"padding": "10px"})], style=CARD_STYLE), width=9),
-            dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-globe-asia me-2"), "宏观大盘环境"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-macro", style={"height": "280px"})], style={"padding": "10px"})], style=CARD_STYLE), width=3),
+            dbc.Col(dbc.Card([dbc.CardBody([html.H6("实时走势与决策标线 (近半年)", className="fw-bold mb-1", style={"color": "#495057", "fontSize": "0.85rem"}), dcc.Graph(id="main-chart", style={"height": "460px"})], style={"padding": "10px"})], style=CARD_STYLE), width=9),
+            dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-globe-asia me-2"), "宏观大盘环境"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-macro", style={"height": "460px"})], style={"padding": "10px"})], style=CARD_STYLE), width=3),
         ], className="gx-2"),
 
+        # 底部四个数据卡片模块
         dbc.Row([
-            dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-file-invoice-dollar me-2"), "核心财务指标"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-financial", style={"height": "280px", "overflow": "hidden"})], style={"padding": "10px"})], style=CARD_STYLE), width=3),
-            dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-robot me-2"), "量化信号矩阵"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-quant", style={"height": "280px", "overflow": "auto"})], style={"padding": "10px"})], style=CARD_STYLE), width=2),
-            dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-brain me-2"), "AI 深度逻辑推演"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), dcc.Markdown(id="out-reasoning", style={"height": "280px", "overflow-y": "auto", "fontSize": "0.8rem", "color": "#495057", "whiteSpace": "pre-wrap", "lineHeight": "1.5"})], style={"padding": "10px"})], style=CARD_STYLE), width=4),
-            dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-newspaper me-2"), "消息面动态"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-news", style={"height": "280px", "overflow-y": "auto", "fontSize": "0.75rem", "color": "#868e96", "whiteSpace": "pre-wrap"})], style={"padding": "10px"})], style=CARD_STYLE), width=3),
+            dbc.Col(dbc.Card([dbc.CardBody([
+                html.H6([html.I(className="fa-solid fa-file-invoice-dollar me-2"), "核心财务指标"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), 
+                html.Div(id="out-financial", style={"height": "240px", "overflowY": "auto", "overflowX": "hidden"})
+            ], style={"padding": "10px", "height": "280px"})], style=CARD_STYLE), width=3),
+            
+            dbc.Col(dbc.Card([dbc.CardBody([
+                html.H6([html.I(className="fa-solid fa-robot me-2"), "量化信号矩阵"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), 
+                html.Div(id="out-quant", style={"height": "240px", "overflowY": "auto", "overflowX": "hidden"})
+            ], style={"padding": "10px", "height": "280px"})], style=CARD_STYLE), width=2),
+            
+            dbc.Col(dbc.Card([dbc.CardBody([
+                html.H6([html.I(className="fa-solid fa-brain me-2"), "AI 深度逻辑推演"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem", "paddingBottom": "4px"}), 
+                # 【推演排版大升级】：加背景、加内边距、行高提升至 1.65、两端对齐 (justify)
+                dcc.Markdown(id="out-reasoning", style={
+                    "height": "200px", "overflowY": "auto", 
+                    "fontSize": "0.8rem", "color": "#343a40", "whiteSpace": "pre-wrap", 
+                    "lineHeight": "1.65", "textAlign": "justify", 
+                    "backgroundColor": "#f8f9fa", "padding": "10px", "borderRadius": "6px"
+                })
+            ], style={"padding": "10px", "height": "280px"})], style=CARD_STYLE), width=4),
+            
+            dbc.Col(dbc.Card([dbc.CardBody([
+                html.H6([html.I(className="fa-solid fa-newspaper me-2"), "消息面动态"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem", "paddingBottom": "4px"}), 
+                # 【新闻排版统⼀】：同款灰背景与圆角，稍微增加行高
+                html.Div(id="out-news", style={
+                    "height": "200px", "overflowY": "auto", "overflowX": "hidden", 
+                    "fontSize": "0.75rem", "color": "#495057", "whiteSpace": "pre-wrap",
+                    "backgroundColor": "#f8f9fa", "padding": "10px", "borderRadius": "6px"
+                })
+            ], style={"padding": "10px", "height": "280px"})], style=CARD_STYLE), width=3),
         ], className="gx-2")
     ]),
 
@@ -189,9 +217,6 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     use_pro = bool(use_pro_switch)
     dual_filter = bool(dual_filter_switch)
 
-    layout_cfg = dict(template="plotly_white", margin=dict(l=30, r=20, t=10, b=10), hovermode="x unified", xaxis_rangeslider_visible=False, showlegend=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', xaxis_type='category')
-    fig = go.Figure(layout=layout_cfg)
-
     def get_display_model_name(tag):
         if not tag: return "-"
         if tag.startswith("D-"):
@@ -201,41 +226,31 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
                 return f"{p_name}(双筛)"
         return MODEL_CONFIGS.get(tag, {}).get('name', tag)
 
-    # 动态渲染颜色的辅助函数
     def format_dynamic_color(text, is_action=True):
         if not text: return "-"
         text_str = str(text)
-        
         if is_action:
-            if text_str == "买入":
-                return html.Span(text_str, style={"color": "#f03e3e"})  # 红色
-            elif text_str == "卖出":
-                return html.Span(text_str, style={"color": "#2f9e44"})  # 绿色
+            if text_str == "买入": return html.Span(text_str, style={"color": "#f03e3e"})
+            elif text_str == "卖出": return html.Span(text_str, style={"color": "#2f9e44"})
         else:
-            # 处理“方向预期”的颜色分级
-            if "强烈看多" in text_str or text_str == "看多":
-                return html.Span(text_str, style={"color": "#f03e3e"})  # 红色
-            elif "偏多" in text_str:
-                return html.Span(text_str, style={"color": "#ffb8b8"})  # 淡红色
-            elif "强烈看空" in text_str or text_str == "看空":
-                return html.Span(text_str, style={"color": "#2f9e44"})  # 绿色
-            elif "偏空" in text_str:
-                return html.Span(text_str, style={"color": "#c3ffcd"})  # 淡绿色
-                
+            if "强烈看多" in text_str or text_str == "看多": return html.Span(text_str, style={"color": "#f03e3e"})
+            elif "偏多" in text_str: return html.Span(text_str, style={"color": "#ffb8b8"})
+            elif "强烈看空" in text_str or text_str == "看空": return html.Span(text_str, style={"color": "#2f9e44"})
+            elif "偏空" in text_str: return html.Span(text_str, style={"color": "#c3ffcd"})
         return text_str
     
+    # ================= 分支 1：点击历史记录表查看详情 =================
     if trigger_id == 'daily-table':
         if not active_cell or active_cell['column_id'] != '详情': return [dash.no_update] * 18
         row_data = table_data[active_cell['row']]
         h_stock, h_date, h_stock_name = row_data['股票代码'], active_tab, row_data.get('股票名称', '未知')
         
         in_fs, out_fs = glob.glob(f"input/{h_date}/{h_stock}_*_input_{h_date}.txt"), glob.glob(f"output/{h_date}/{h_stock}_*_output_*_{h_date}.txt")
-        if not in_fs or not out_fs: return fig, f"{h_stock_name} ({h_stock})", "-", "-", "-", "-", "-", "-", "-", "-", "未能找到历史文本文件！", "-", "-", "-", "-", dash.no_update, dash.no_update, dash.no_update
+        if not in_fs or not out_fs: 
+            return go.Figure(), f"{h_stock_name} ({h_stock})", "-", "-", "-", "-", "-", "-", "-", "-", "未能找到历史文本文件！", "-", "-", "-", "-", dash.no_update, dash.no_update, dash.no_update
         
-        try:
-            m_tag = os.path.basename(out_fs[0]).split('_output_')[1].rsplit('_', 1)[0]
-        except:
-            m_tag = "-"
+        try: m_tag = os.path.basename(out_fs[0]).split('_output_')[1].rsplit('_', 1)[0]
+        except: m_tag = "-"
         disp_model = get_display_model_name(m_tag)
 
         with open(in_fs[0], 'r', encoding='utf-8') as f: h_in = f.read()
@@ -248,41 +263,82 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
         beg, end = (datetime.strptime(h_date, "%Y-%m-%d") - timedelta(days=180)).strftime("%Y%m%d"), h_date.replace('-', '')
         df_chart = get_chart_data(h_stock, beg, end)
         
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.75, 0.25])
+        # 调用统一引擎生成高级图表
+        fig = create_advanced_kline_fig(df_chart)
+        
+        # 叠加策略基准线 (不影响前端切换)
         if not df_chart.empty:
-            df_chart['date'] = df_chart['date'].astype(str)
-            fig.add_trace(go.Candlestick(x=df_chart['date'], open=df_chart['open'], high=df_chart['high'], low=df_chart['low'], close=df_chart['close'], increasing_line_color='#f03e3e', decreasing_line_color='#2f9e44'), row=1, col=1)
-            colors = ['#f03e3e' if row['close'] >= row['open'] else '#2f9e44' for _, row in df_chart.iterrows()]
-            fig.add_trace(go.Bar(x=df_chart['date'], y=df_chart['volume'], marker_color=colors, opacity=0.7), row=2, col=1)
             buy_p, sell_p, stop_p = parsed["buy_p"], parsed["sell_p"], parsed["stop_p"]
             if buy_p and str(buy_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(buy_p), line_dash="dot", line_color="#be4bdb", annotation_text="买点", row=1, col=1)
             if sell_p and str(sell_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(sell_p), line_dash="dot", line_color="#f03e3e", annotation_text="目标", row=1, col=1)
             if stop_p and str(stop_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(stop_p), line_dash="dot", line_color="#37b24d", annotation_text="止损", row=1, col=1)
-        fig.update_layout(**layout_cfg)
-        fig.update_xaxes(type='category', tickmode='auto', nticks=12)
         
         return fig, f"{h_stock_name} ({h_stock})", format_dynamic_color(parsed["action"], True), format_dynamic_color(parsed["expectation"], False), parsed["pos_adv"], parsed["confidence"], str(parsed["buy_p"]) if parsed["buy_p"] else "-", str(parsed["sell_p"]) if parsed["sell_p"] else "-", str(parsed["stop_p"]) if parsed["stop_p"] else "-", disp_model, parsed["reasoning"], news_t, macro_ui, fin_ui, quant_ui, dash.no_update, dash.no_update, dash.no_update
 
+    # ================= 分支 2：点击“开始分析”获取新决策 =================
     if not stock_code: return [dash.no_update] * 18
     c_date = get_logical_date()
-    c_str, end, beg = c_date.strftime("%Y-%m-%d"), c_date.isoformat().replace('-', ''), (c_date - timedelta(days=180)).isoformat().replace('-', '')
+    c_str, end, beg = c_date.strftime("%Y-%m-%d"), c_date.isoformat().replace('-', ''), (c_date - timedelta(days=720)).isoformat().replace('-', '')
     stock_code = stock_code.strip()
     s_name = get_stock_name_bs(stock_code)
     safe_s_name = re.sub(r'[\\/:*?"<>|]', '', s_name) 
     
     df_chart = get_chart_data(stock_code, beg, end)
     s_price = df_chart['close'].iloc[-1] if not df_chart.empty else 0
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.75, 0.25])
-    if not df_chart.empty:
-        df_chart['date'] = df_chart['date'].astype(str)
-        fig.add_trace(go.Candlestick(x=df_chart['date'], open=df_chart['open'], high=df_chart['high'], low=df_chart['low'], close=df_chart['close'], increasing_line_color='#f03e3e', decreasing_line_color='#2f9e44'), row=1, col=1)
-        fig.add_trace(go.Bar(x=df_chart['date'], y=df_chart['volume'], marker_color=['#f03e3e' if row['close'] >= row['open'] else '#2f9e44' for _, row in df_chart.iterrows()], opacity=0.7), row=2, col=1)
-    fig.update_layout(**layout_cfg)
-    fig.update_xaxes(type='category', tickmode='auto', nticks=12)
+    
+    # 调用统一引擎生成高级图表
+    fig = create_advanced_kline_fig(df_chart)
 
     in_str = get_stock_data(stock_code=stock_code, beg=beg, end=end, current_date=c_str)
     news_titles = fetch_news_safely(stock_code, safe_s_name, c_str)
-    user_msg = f"""基于获得的以下数据和新闻消息，做出你的交易决策。\n\n{in_str}\n\n最近三十个交易日数据如下：\n{df_chart.tail(30).to_string(index=False) if not df_chart.empty else "暂无"}\n\n相关新闻如下：\n{news_titles}\n\n当前该股持仓：{position} 股\n当前持仓成本: {cost} 元\n\n请记住，行动必须是买入、卖出、持有或观望。\n谨慎考虑交易决策：考虑当前股价是高位还是低位，在低位买入，高位卖出。\n考虑自己的持仓成本，在有足够浮盈的情况下考虑卖出收获现金实利。"""
+    # ------ 新增：合成月K线并取最近20个月 ------
+    if not df_chart.empty:
+        # 复制一份以防修改原日K数据
+        df_monthly_tmp = df_chart.copy()
+        # 确保 date 转换为 datetime 格式以便提取年月
+        df_monthly_tmp['date'] = pd.to_datetime(df_monthly_tmp['date'])
+        # 新增一列年月，比如 '2026-01' 作为分组基准
+        df_monthly_tmp['year_month'] = df_monthly_tmp['date'].dt.to_period('M')
+        
+        # 按照年月进行分组聚合
+        df_monthly = df_monthly_tmp.groupby('year_month').agg({
+            'open': 'first',  # 月初开盘
+            'high': 'max',    # 月内最高
+            'low': 'min',     # 月内最低
+            'close': 'last',  # 月末收盘
+            'volume': 'sum'   # 月成交量总和
+        }).reset_index()
+        
+        # 将格式重新调整为清晰的字符串格式，重命名列与日K保持一致
+        df_monthly.rename(columns={'year_month': 'date'}, inplace=True)
+        df_monthly['date'] = df_monthly['date'].astype(str)
+        
+        monthly_str = df_monthly.tail(20).to_string(index=False)
+    else:
+        monthly_str = "暂无"
+
+    daily_str = df_chart.tail(20).to_string(index=False) if not df_chart.empty else "暂无"
+
+    # ------ 修改后的 prompt ------
+    user_msg = f"""基于获得的以下数据和新闻消息，做出你的交易决策。
+
+{in_str}
+
+最近二十个交易日数据如下：
+{daily_str}
+
+最近二十个月K线数据如下：
+{monthly_str}
+
+相关新闻如下：
+{news_titles}
+
+当前该股持仓：{position} 股
+当前持仓成本: {cost} 元
+
+请记住，行动必须是买入、卖出、持有或观望。
+谨慎考虑交易决策：考虑当前股价是高位还是低位，在低位买入，高位卖出。
+考虑自己的持仓成本，在有足够浮盈的情况下考虑卖出收获现金实利。"""
 
     os.makedirs(f"input/{c_str}", exist_ok=True)
     with open(f"input/{c_str}/{stock_code}_{safe_s_name}_input_{c_str}.txt", 'w', encoding='utf-8') as f: f.write(user_msg)
@@ -325,6 +381,7 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     macro_ui = parse_and_build_macro_ui(user_msg)
     fin_ui, quant_ui, news_t = parse_and_build_fin_and_quant_ui(user_msg)
 
+    # 叠加策略基准线 (不影响前端切换)
     buy_p, sell_p, stop_p = parsed["buy_p"], parsed["sell_p"], parsed["stop_p"]
     if buy_p and str(buy_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(buy_p), line_dash="dot", line_color="#be4bdb", annotation_text="买点", row=1, col=1)
     if sell_p and str(sell_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(sell_p), line_dash="dot", line_color="#f03e3e", annotation_text="目标", row=1, col=1)
