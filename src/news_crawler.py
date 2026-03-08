@@ -73,7 +73,7 @@ def get_news_titles(symbol="600000", stock_name='浦发银行', max_news=20, sav
     返回:
         包含标题和宏观摘要的字符串
     """
-    url = f"https://so.eastmoney.com/news/s?keyword={symbol}&type=title&sort=time"
+    url = f"https://so.eastmoney.com/news/s?keyword={symbol}&type=content&sort=time"
     titles = []
 
     try:
@@ -195,6 +195,6 @@ def get_news_titles(symbol="600000", stock_name='浦发银行', max_news=20, sav
 if __name__ == "__main__":
     # 使用今日日期测试
     today_str = datetime.now().strftime("%Y-%m-%d")
-    result = get_news_titles(symbol="510300", stock_name='沪深300ETF', max_news=20, current_date=today_str)
+    result = get_news_titles(symbol="002170", stock_name='芭田股份', max_news=20, current_date=today_str)
     print("\n最终抓取结果展示：")
     print(result)
