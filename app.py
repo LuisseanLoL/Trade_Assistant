@@ -26,7 +26,7 @@ from src.utils import (
     load_daily_table_by_date, 
     get_random_unprocessed_stock, 
     parse_llm_json,
-    create_advanced_kline_fig
+    create_advanced_kline_fig,
 )
 from src.ui_components import parse_and_build_macro_ui, parse_and_build_fin_and_quant_ui
 
@@ -243,6 +243,25 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
             elif "偏空" in text_str: return html.Span(text_str, style={"color": "#c3ffcd"})
         return text_str
     
+    def get_price_display(target_p, buy_p):
+        """计算目标价/止损价相对于买入价的百分比，并格式化输出"""
+        if not target_p or str(target_p) == "-": return "-"
+        if not buy_p or str(buy_p) == "-": return str(target_p)
+        
+        try:
+            t_val, b_val = float(target_p), float(buy_p)
+            if b_val > 0:
+                pct = (t_val - b_val) / b_val * 100
+                sign = "+" if pct > 0 else ""
+                # 主数字保持原样，百分比缩小字号并降低透明度，更具高级感
+                return html.Span([
+                    str(t_val),
+                    html.Span(f" ({sign}{pct:.2f}%)", style={"fontSize": "0.75rem", "opacity": "0.85", "marginLeft": "2px"})
+                ])
+        except Exception:
+            pass
+        return str(target_p)
+    
     # ================= 分支 1：点击历史记录表查看详情 =================
     if trigger_id == 'daily-table':
         if not active_cell or active_cell['column_id'] != '详情': return [dash.no_update] * 18
@@ -274,7 +293,14 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
             if sell_p and str(sell_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(sell_p), line_dash="dot", line_color="#f03e3e", annotation_text="目标", row=1, col=1)
             if stop_p and str(stop_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(stop_p), line_dash="dot", line_color="#37b24d", annotation_text="止损", row=1, col=1)
         
-        return fig, f"{h_stock_name} ({h_stock})", format_dynamic_color(parsed["action"], True), format_dynamic_color(parsed["expectation"], False), parsed["pos_adv"], parsed["confidence"], str(parsed["buy_p"]) if parsed["buy_p"] else "-", str(parsed["sell_p"]) if parsed["sell_p"] else "-", str(parsed["stop_p"]) if parsed["stop_p"] else "-", disp_model, parsed["reasoning"], news_t, macro_ui, fin_ui, quant_ui, dash.no_update, dash.no_update, dash.no_update
+        buy_p, sell_p, stop_p = parsed.get("buy_p"), parsed.get("sell_p"), parsed.get("stop_p")
+        
+        # 使用辅助函数生成带百分比的显示组件
+        sell_display = get_price_display(sell_p, buy_p)
+        stop_display = get_price_display(stop_p, buy_p)
+        buy_display = str(buy_p) if buy_p else "-"
+        
+        return fig, f"{h_stock_name} ({h_stock})", format_dynamic_color(parsed["action"], True), format_dynamic_color(parsed["expectation"], False), parsed["pos_adv"], parsed["confidence"], buy_display, sell_display, stop_display, disp_model, parsed["reasoning"], news_t, macro_ui, fin_ui, quant_ui, dash.no_update, dash.no_update, dash.no_update
 
     # ================= 分支 2：点击“开始分析”获取新决策 =================
     if not stock_code: return [dash.no_update] * 18
@@ -373,13 +399,20 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
             judge_msg = f"{user_msg}\n\n"
             judge_msg += "=================================\n"
             judge_msg += "【投资总监（AI裁判）专属决议指令】\n"
-            judge_msg += "以上是客观标的数据。以下是你的多位顶级研究员（不同AI模型）针对该数据给出的独立分析和JSON报告：\n\n"
+            judge_msg += "以上是客观标的数据。以下是你的多位顶级研究员（不同AI模型）针对该数据给出的独立分析和 JSON 报告：\n\n"
+            
             for mid, res in committee_results.items():
                 m_name = MODEL_CONFIGS.get(mid, {}).get('name', mid)
                 judge_msg += f"--- 研究员模型：{m_name} 的意见 ---\n{res}\n\n"
-            judge_msg += "作为量化基金的投资总监（裁判），请你综合考虑上述研究员的意见（注意采纳少数服从多数原则，并甄别其中的逻辑硬伤或高置信度判断）。\n"
-            judge_msg += "请结合你自己的判断，给出最终的决定、点位和仓位。必须在'原因'字段中总结委员会的共识与分歧，以及你最终拍板的逻辑依据。\n"
-            judge_msg += "注意：你的输出必须是一个单一的、严格符合提示词规范的 JSON 对象！\n"
+                
+            judge_msg += "作为量化基金的投资总监，你拥有最终拍板权。请严格按照以下【核心裁判原则】进行综合决策：\n"
+            judge_msg += "1. 逻辑至上，拒绝盲从：金融市场真理往往掌握在少数人手中。绝对不要机械地‘少数服从多数’！你要寻找的是‘谁的底层逻辑更无懈可击’，‘谁捕捉到了当前主导定价的核心矛盾’。\n"
+            judge_msg += "2. 交叉质证与证伪：重点审视研究员之间的【分歧点】。如果少数派指出了致命的风控隐患（如隐含的估值陷阱、量价背离、均值回归的极值点），且多数派未能有效应对，你应该果断采纳少数派意见，甚至一票否决多数派的狂热。\n"
+            judge_msg += "3. 混沌期的防守哲学：如果研究员意见严重撕裂（如 2:2 对立），且双方都没有压倒性的逻辑证据，或者面临极高的不确定性，你可以直接判定为‘观望’以保护本金，或给出极低的试错仓位，切勿强行折中。\n\n"
+            judge_msg += "请给出最终的决策、点位和仓位。你必须在 JSON 的 '原因' 字段中分段输出：\n"
+            judge_msg += "【委员会共识与分歧】：简述各方观点的核心交锋点。\n"
+            judge_msg += "【投资总监拍板逻辑】：详细说明你最终支持哪一方（或推翻所有人）的深度理由，以及该决策背后的盈亏比考量。\n"
+            judge_msg += "注意：你的输出必须是一个单一的、严格符合原定系统提示词规范的 JSON 对象！\n"
 
             # 呼叫裁判模型进行最终裁决
             print(f"⚖️ 正在请求裁判模型 [{pro_model}] 进行最终综合拍板...")
@@ -414,7 +447,12 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
         "股票代码": stock_code, "股票名称": s_name, "决策模型": disp_model, "当前价格": s_price, "预期": parsed["expectation"], "操作": parsed["action"], "建议仓位": parsed["pos_adv"], "置信度": parsed["confidence"], "建议买入价": str(buy_p) if buy_p else "-", "目标卖出价": str(sell_p) if sell_p else "-", "建议止损价": str(stop_p) if stop_p else "-", "回报风险比": rr_str
     }]).to_csv(f"output/{c_str}/Daily Table_{c_str}.csv", index=False, header=not os.path.exists(f"output/{c_str}/Daily Table_{c_str}.csv"), mode='a', encoding='utf-8-sig')
 
-    return fig, f"{s_name} ({stock_code})", format_dynamic_color(parsed["action"], True), format_dynamic_color(parsed["expectation"], False), parsed["pos_adv"], parsed["confidence"], str(buy_p) if buy_p else "-", str(sell_p) if sell_p else "-", str(stop_p) if stop_p else "-", disp_model, parsed["reasoning"], news_t, macro_ui, fin_ui, quant_ui, [dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()[:5]], c_str, load_daily_table_by_date(c_str)
+    # 在最终 return 之前，使用辅助函数生成带百分比的显示组件
+    sell_display = get_price_display(sell_p, buy_p)
+    stop_display = get_price_display(stop_p, buy_p)
+    buy_display = str(buy_p) if buy_p else "-"
+
+    return fig, f"{s_name} ({stock_code})", format_dynamic_color(parsed["action"], True), format_dynamic_color(parsed["expectation"], False), parsed["pos_adv"], parsed["confidence"], buy_display, sell_display, stop_display, disp_model, parsed["reasoning"], news_t, macro_ui, fin_ui, quant_ui, [dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()[:5]], c_str, load_daily_table_by_date(c_str)
 
 if __name__ == '__main__':
     app.run(debug=True, port=8050)
