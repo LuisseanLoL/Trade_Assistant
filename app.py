@@ -10,6 +10,7 @@ import os
 import re
 import json_repair
 import glob
+import concurrent.futures  # 新增并发库用于多模型议事
 from dotenv import load_dotenv
 
 # 加载环境变量
@@ -66,20 +67,27 @@ sidebar = html.Div([
         dbc.Input(id="input-cost", type="number", value=0, className="mb-3", size="sm"),
 
         # --- 模型架构解耦配置 ---
-        html.H6("模型解耦配置", className="text-muted fw-bold mb-2", style={"fontSize": "0.8rem", "letterSpacing": "1px"}),
+        html.H6("流水线模型配置", className="text-muted fw-bold mb-2", style={"fontSize": "0.8rem", "letterSpacing": "1px"}),
         
         html.Label("1. 基础/初筛模型", className="small fw-bold text-secondary mb-1"),
         dbc.Select(id="dropdown-flash-model", options=MODEL_OPTIONS, value=default_flash_model, className="mb-2", size="sm"),
         
-        dbc.Checklist(options=[{"label": "2. 启用 Pro 高级模型", "value": 1}], value=[1], id="switch-use-pro", switch=True, className="mb-1 text-secondary small fw-bold"),
-        html.Label("选择 Pro 模型", className="small fw-bold text-secondary mb-1"),
+        dbc.Checklist(options=[{"label": "2. 启用 Pro 模型 (或裁判)", "value": 1}], value=[1], id="switch-use-pro", switch=True, className="mb-1 text-secondary small fw-bold"),
+        html.Label("选择 Pro / 裁判模型", className="small fw-bold text-secondary mb-1"),
         dbc.Select(id="dropdown-pro-model", options=MODEL_OPTIONS, value=default_pro_model, className="mb-2", size="sm"),
 
-        dbc.Checklist(options=[{"label": "3. 启用双重筛选", "value": 1}], value=[1], id="switch-dual-filter", switch=True, className="mb-3 text-secondary small fw-bold"),
+        dbc.Checklist(options=[{"label": "3. 启用双重筛选过滤", "value": 1}], value=[1], id="switch-dual-filter", switch=True, className="mb-2 text-secondary small fw-bold"),
+
+        # --- 【新增】多模型议事配置 ---
+        html.Hr(style={"margin": "10px 0", "opacity": "0.15"}),
+        html.H6("多模型议事 (MoA)", className="text-muted fw-bold mb-2", style={"fontSize": "0.8rem", "letterSpacing": "1px", "color": "#e64980"}),
+        dbc.Checklist(options=[{"label": "启用 AI 裁判委员会", "value": 1}], value=[], id="switch-use-moa", switch=True, className="mb-1 text-secondary small fw-bold"),
+        html.Label("选择参会模型 (建议 2-4 个)", className="small fw-bold text-secondary mb-1"),
+        dcc.Dropdown(id="dropdown-committee-models", options=MODEL_OPTIONS, multi=True, placeholder="选择研究员模型...", className="mb-3", style={"fontSize": "0.8rem"}),
 
         dbc.Button("开始分析", id="btn-analyze", color="primary", className="w-100 fw-bold", size="sm", style={"borderRadius": "4px", "backgroundColor": "#4c6ef5", "border": "none"}),
         html.Div(id="random-msg", className="mt-2 small text-danger")
-    ], style={"height": "calc(100vh - 80px)", "overflowY": "auto"})
+    ], style={"height": "calc(100vh - 80px)", "overflowY": "auto", "overflowX": "hidden"})
 ], style=SIDEBAR_STYLE)
 
 def create_stat_card(title, value_id, color):
@@ -115,7 +123,6 @@ content = html.Div([
             dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-globe-asia me-2"), "宏观大盘环境"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-macro", style={"height": "460px"})], style={"padding": "10px"})], style=CARD_STYLE), width=3),
         ], className="gx-2"),
 
-        # 底部四个数据卡片模块
         dbc.Row([
             dbc.Col(dbc.Card([dbc.CardBody([
                 html.H6([html.I(className="fa-solid fa-file-invoice-dollar me-2"), "核心财务指标"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), 
@@ -129,7 +136,6 @@ content = html.Div([
             
             dbc.Col(dbc.Card([dbc.CardBody([
                 html.H6([html.I(className="fa-solid fa-brain me-2"), "AI 深度逻辑推演"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem", "paddingBottom": "4px"}), 
-                # 【推演排版大升级】：加背景、加内边距、行高提升至 1.65、两端对齐 (justify)
                 dcc.Markdown(id="out-reasoning", style={
                     "height": "200px", "overflowY": "auto", 
                     "fontSize": "0.8rem", "color": "#343a40", "whiteSpace": "pre-wrap", 
@@ -140,7 +146,6 @@ content = html.Div([
             
             dbc.Col(dbc.Card([dbc.CardBody([
                 html.H6([html.I(className="fa-solid fa-newspaper me-2"), "消息面动态"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem", "paddingBottom": "4px"}), 
-                # 【新闻排版统⼀】：同款灰背景与圆角，稍微增加行高
                 html.Div(id="out-news", style={
                     "height": "200px", "overflowY": "auto", "overflowX": "hidden", 
                     "fontSize": "0.75rem", "color": "#495057", "whiteSpace": "pre-wrap",
@@ -163,18 +168,8 @@ content = html.Div([
                 style_data_conditional=[
                     {'if': {'filter_query': '{操作} = "买入"'}, 'color': '#f03e3e', 'fontWeight': 'bold'},
                     {'if': {'filter_query': '{操作} = "卖出"'}, 'color': '#2f9e44', 'fontWeight': 'bold'},
-                    {
-                        'if': {'column_id': '详情'},
-                        'cursor': 'pointer',
-                        'color': '#4c6ef5',
-                        'fontWeight': 'bold',
-                        'backgroundColor': '#f0f4ff',
-                    },
-                    {
-                        'if': {'column_id': '详情', 'state': 'active'},
-                        'backgroundColor': '#dce4ff',
-                        'border': '1px solid #4c6ef5'
-                    }
+                    {'if': {'column_id': '详情'}, 'cursor': 'pointer', 'color': '#4c6ef5', 'fontWeight': 'bold', 'backgroundColor': '#f0f4ff'},
+                    {'if': {'column_id': '详情', 'state': 'active'}, 'backgroundColor': '#dce4ff', 'border': '1px solid #4c6ef5'}
                 ],
                 page_size=5
             )
@@ -206,19 +201,28 @@ def update_table(active_tab): return load_daily_table_by_date(active_tab) if act
     [Input("btn-analyze", "n_clicks"), Input("daily-table", "active_cell")],
     [State("input-stock-code", "value"), 
      State("dropdown-flash-model", "value"), State("switch-use-pro", "value"), State("dropdown-pro-model", "value"), State("switch-dual-filter", "value"),
+     State("switch-use-moa", "value"), State("dropdown-committee-models", "value"), # 新增 MoA 状态获取
      State("input-position", "value"), State("input-cost", "value"), State("daily-table", "derived_viewport_data"), State("date-tabs", "active_tab")],
     prevent_initial_call=True
 )
-def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_pro_switch, pro_model, dual_filter_switch, position, cost, table_data, active_tab):
+def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_pro_switch, pro_model, dual_filter_switch, moa_switch, committee_models, position, cost, table_data, active_tab):
     ctx = dash.callback_context
     if not ctx.triggered: return [dash.no_update] * 18
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
     use_pro = bool(use_pro_switch)
     dual_filter = bool(dual_filter_switch)
+    use_moa = bool(moa_switch)
+    committee_models = committee_models if committee_models else []
 
+    # 解析模型展示名称（兼容 MoA 标签）
     def get_display_model_name(tag):
         if not tag: return "-"
+        if tag.startswith("MoA-"):
+            parts = tag.split("-")
+            if len(parts) >= 3:
+                p_name = MODEL_CONFIGS.get(parts[2], {}).get('name', parts[2])
+                return f"【决议】{p_name}"
         if tag.startswith("D-"):
             parts = tag.split("-")
             if len(parts) >= 3:
@@ -263,10 +267,7 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
         beg, end = (datetime.strptime(h_date, "%Y-%m-%d") - timedelta(days=180)).strftime("%Y%m%d"), h_date.replace('-', '')
         df_chart = get_chart_data(h_stock, beg, end)
         
-        # 调用统一引擎生成高级图表
         fig = create_advanced_kline_fig(df_chart)
-        
-        # 叠加策略基准线 (不影响前端切换)
         if not df_chart.empty:
             buy_p, sell_p, stop_p = parsed["buy_p"], parsed["sell_p"], parsed["stop_p"]
             if buy_p and str(buy_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(buy_p), line_dash="dot", line_color="#be4bdb", annotation_text="买点", row=1, col=1)
@@ -285,41 +286,24 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     
     df_chart = get_chart_data(stock_code, beg, end)
     s_price = df_chart['close'].iloc[-1] if not df_chart.empty else 0
-    
-    # 调用统一引擎生成高级图表
     fig = create_advanced_kline_fig(df_chart)
 
     in_str = get_stock_data(stock_code=stock_code, beg=beg, end=end, current_date=c_str)
     news_titles = fetch_news_safely(stock_code, safe_s_name, c_str)
-    # ------ 新增：合成月K线并取最近20个月 ------
+    
     if not df_chart.empty:
-        # 复制一份以防修改原日K数据
         df_monthly_tmp = df_chart.copy()
-        # 确保 date 转换为 datetime 格式以便提取年月
         df_monthly_tmp['date'] = pd.to_datetime(df_monthly_tmp['date'])
-        # 新增一列年月，比如 '2026-01' 作为分组基准
         df_monthly_tmp['year_month'] = df_monthly_tmp['date'].dt.to_period('M')
-        
-        # 按照年月进行分组聚合
-        df_monthly = df_monthly_tmp.groupby('year_month').agg({
-            'open': 'first',  # 月初开盘
-            'high': 'max',    # 月内最高
-            'low': 'min',     # 月内最低
-            'close': 'last',  # 月末收盘
-            'volume': 'sum'   # 月成交量总和
-        }).reset_index()
-        
-        # 将格式重新调整为清晰的字符串格式，重命名列与日K保持一致
+        df_monthly = df_monthly_tmp.groupby('year_month').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'}).reset_index()
         df_monthly.rename(columns={'year_month': 'date'}, inplace=True)
         df_monthly['date'] = df_monthly['date'].astype(str)
-        
         monthly_str = df_monthly.tail(20).to_string(index=False)
     else:
         monthly_str = "暂无"
 
     daily_str = df_chart.tail(20).to_string(index=False) if not df_chart.empty else "暂无"
 
-    # ------ 修改后的 prompt ------
     user_msg = f"""基于获得的以下数据和新闻消息，做出你的交易决策。
 
 {in_str}
@@ -350,6 +334,7 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     run_pro = False
     res_text = ""
     
+    # 【一、 过滤/初筛阶段】
     if use_pro and dual_filter:
         if float(position) > 0: 
             run_pro = True
@@ -368,10 +353,44 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     else:
         res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=flash_model)
 
+    # 【二、 高级决议阶段：单模型 vs. 多模型议事(MoA)】
     if run_pro: 
-        res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=pro_model)
-    
-    model_tag = f"D-{flash_model}-{pro_model}" if (run_pro and dual_filter) else (pro_model if run_pro else flash_model)
+        if use_moa and len(committee_models) > 0:
+            print(f"🚀 触发 MoA 议事机制，正在并发呼叫委员会模型: {committee_models}...")
+            committee_results = {}
+            # 并发请求参会模型获取独立意见
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(committee_models)) as executor:
+                futures = {executor.submit(get_LLM_message, system_content=sys_content, user_message=user_msg, model_id=mid): mid for mid in committee_models}
+                for future in concurrent.futures.as_completed(futures):
+                    mid = futures[future]
+                    try:
+                        committee_results[mid] = future.result()
+                    except Exception as e:
+                        print(f"⚠️ {mid} 议事失败: {e}")
+                        committee_results[mid] = f"该模型分析失败：{e}"
+            
+            # 组装 Meta-Prompt (裁判提示词)
+            judge_msg = f"{user_msg}\n\n"
+            judge_msg += "=================================\n"
+            judge_msg += "【投资总监（AI裁判）专属决议指令】\n"
+            judge_msg += "以上是客观标的数据。以下是你的多位顶级研究员（不同AI模型）针对该数据给出的独立分析和JSON报告：\n\n"
+            for mid, res in committee_results.items():
+                m_name = MODEL_CONFIGS.get(mid, {}).get('name', mid)
+                judge_msg += f"--- 研究员模型：{m_name} 的意见 ---\n{res}\n\n"
+            judge_msg += "作为量化基金的投资总监（裁判），请你综合考虑上述研究员的意见（注意采纳少数服从多数原则，并甄别其中的逻辑硬伤或高置信度判断）。\n"
+            judge_msg += "请结合你自己的判断，给出最终的决定、点位和仓位。必须在'原因'字段中总结委员会的共识与分歧，以及你最终拍板的逻辑依据。\n"
+            judge_msg += "注意：你的输出必须是一个单一的、严格符合提示词规范的 JSON 对象！\n"
+
+            # 呼叫裁判模型进行最终裁决
+            print(f"⚖️ 正在请求裁判模型 [{pro_model}] 进行最终综合拍板...")
+            res_text = get_LLM_message(system_content=sys_content, user_message=judge_msg, model_id=pro_model)
+            model_tag = f"MoA-{len(committee_models)}议事-{pro_model}"
+            
+        else:
+            # 原有的单发 Pro 模型逻辑
+            res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=pro_model)
+            model_tag = f"D-{flash_model}-{pro_model}" if dual_filter else pro_model
+            
     disp_model = get_display_model_name(model_tag)
     
     os.makedirs(f"output/{c_str}", exist_ok=True)
@@ -381,7 +400,6 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     macro_ui = parse_and_build_macro_ui(user_msg)
     fin_ui, quant_ui, news_t = parse_and_build_fin_and_quant_ui(user_msg)
 
-    # 叠加策略基准线 (不影响前端切换)
     buy_p, sell_p, stop_p = parsed["buy_p"], parsed["sell_p"], parsed["stop_p"]
     if buy_p and str(buy_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(buy_p), line_dash="dot", line_color="#be4bdb", annotation_text="买点", row=1, col=1)
     if sell_p and str(sell_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(sell_p), line_dash="dot", line_color="#f03e3e", annotation_text="目标", row=1, col=1)
