@@ -14,7 +14,9 @@ env/
 # 本地量化数据与日志 (无需上传)
 log/
 input/
+input_etf/
 output/
+output_etf/
 test/
 arena_results/
 
