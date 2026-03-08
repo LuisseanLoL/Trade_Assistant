@@ -107,16 +107,20 @@ if __name__ == "__main__":
     
     # 1. 指定输入文件的路径
     sys_prompt_file = "LLM system content.txt"
-    user_input_file = r"input\2026-03-07\000400_许继电气_input_2026-03-07.txt" # 改成你实际想测试的 input 路径
+    user_input_file = r"input\2026-03-08\600830_香溢融通_input_2026-03-08.txt" # 改成你实际想测试的 input 路径
     
     # 2. 指定参赛阵容（填写你在 .env 中 ACTIVE_MODELS 里定义的 ID 即可）
     # 设置为 None 即可一键跑完所有注册的模型
     models_to_test = [
-        "gemini_flash",
-        "gemini_pro",
-        "qwen_9b",
-        "qwen_35b"
-    ]
+    "gemini_flash",
+    "gemini_pro",
+    "qwen_9b",
+    "qwen_35b",
+    "kimi_k25",
+    "deepseek_v32",
+    "glm_5",
+    "minimax_m25"
+]
     
     # 启动竞技场
     run_model_arena(sys_prompt_file, user_input_file, test_models=models_to_test)

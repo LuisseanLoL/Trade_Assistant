@@ -61,7 +61,7 @@ def get_macro_news(current_date_str):
     return ""
 
 
-def get_news_titles(symbol="600325", stock_name='华发股份', max_news=20, save_txt=True, current_date='20250214'):
+def get_news_titles(symbol="600000", stock_name='浦发银行', max_news=20, save_txt=True, current_date='20250214'):
     """
     获取并处理新闻标题 (使用 Playwright 无头浏览器绕过反爬)
     参数:
@@ -73,7 +73,7 @@ def get_news_titles(symbol="600325", stock_name='华发股份', max_news=20, sav
     返回:
         包含标题和宏观摘要的字符串
     """
-    url = f"https://so.eastmoney.com/news/s?keyword={symbol}"
+    url = f"https://so.eastmoney.com/news/s?keyword={symbol}&type=title&sort=time"
     titles = []
 
     try:
@@ -119,9 +119,21 @@ def get_news_titles(symbol="600325", stock_name='华发股份', max_news=20, sav
                         
                     title = a_tag.get_text(strip=True)
                     
-                    if len(title) > 4 and title not in titles:
-                        titles.append(title)
-                        new_titles_found = True
+                    # 🔴 新增：获取日期
+                    # 获取该新闻块的所有文本，并用空格分隔
+                    item_text = item.get_text(separator=' ', strip=True)
+                    # 使用正则匹配类似 "2026-03-06 18:25:35" 的时间戳
+                    date_match = re.search(r'\d{4}-\d{2}-\d{2}', item_text)
+                    date_str = date_match.group(0) if date_match else "未知日期"
+                    
+                    if len(title) > 4:
+                        # 将日期和标题拼接，例如："[2026-03-06 18:25:35] A股史上第一个..."
+                        formatted_item = f"[{date_str}] {title}"
+                        
+                        # 检查排重（这里只用标题排重比较好，防止同一条新闻更新了时间戳）
+                        if not any(title in existing_item for existing_item in titles):
+                            titles.append(formatted_item)
+                            new_titles_found = True
                         
                 if len(titles) >= max_news:
                     break
@@ -183,6 +195,6 @@ def get_news_titles(symbol="600325", stock_name='华发股份', max_news=20, sav
 if __name__ == "__main__":
     # 使用今日日期测试
     today_str = datetime.now().strftime("%Y-%m-%d")
-    result = get_news_titles(symbol="600325", stock_name='华发股份', max_news=20, current_date=today_str)
+    result = get_news_titles(symbol="510300", stock_name='沪深300ETF', max_news=20, current_date=today_str)
     print("\n最终抓取结果展示：")
     print(result)

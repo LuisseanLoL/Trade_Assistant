@@ -111,7 +111,7 @@ content = html.Div([
         ], className="d-flex align-items-center mb-2", style={"width": "100%"}),
         
         dbc.Row([
-            dbc.Col(dbc.Card([dbc.CardBody([html.H6("实时走势与决策标线 (近半年)", className="fw-bold mb-1", style={"color": "#495057", "fontSize": "0.85rem"}), dcc.Graph(id="main-chart", style={"height": "460px"})], style={"padding": "10px"})], style=CARD_STYLE), width=9),
+            dbc.Col(dbc.Card([dbc.CardBody([html.H6("实时走势与决策标线", className="fw-bold mb-1", style={"color": "#495057", "fontSize": "0.85rem"}), dcc.Graph(id="main-chart", style={"height": "460px"})], style={"padding": "10px"})], style=CARD_STYLE), width=9),
             dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-globe-asia me-2"), "宏观大盘环境"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-macro", style={"height": "460px"})], style={"padding": "10px"})], style=CARD_STYLE), width=3),
         ], className="gx-2"),
 
