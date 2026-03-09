@@ -3,15 +3,20 @@ import dash
 from dash import dcc, html, Input, Output, State, dash_table, callback_context
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import pandas as pd
 from datetime import datetime, timedelta
 import os
 import re
 import json_repair
 import glob
-import concurrent.futures  # 新增并发库用于多模型议事
+import logging
+import concurrent.futures
 from dotenv import load_dotenv
+
+# 屏蔽底层 HTTP 库的 INFO 级别请求日志，避免大模型 API 刷屏
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("requests").setLevel(logging.WARNING)
 
 # 加载环境变量
 load_dotenv()
@@ -49,6 +54,18 @@ else:
     default_flash_model = MODEL_OPTIONS[0]['value'] if len(MODEL_OPTIONS) > 0 else None
     default_pro_model = MODEL_OPTIONS[1]['value'] if len(MODEL_OPTIONS) > 1 else default_flash_model
 
+# 【新增】：动态获取 Agents 列表
+def get_agent_options():
+    agent_files = glob.glob("agents_text/*.txt")
+    options = []
+    for f in agent_files:
+        name = os.path.basename(f).replace(".txt", "")
+        # 将下划线替换为空格，用于前端展示
+        options.append({'label': name.replace("_", " "), 'value': name})
+    return sorted(options, key=lambda x: x['label'])
+
+AGENT_OPTIONS = get_agent_options()
+
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.LUMEN, dbc.icons.FONT_AWESOME], prevent_initial_callbacks="initial_duplicate")
 app.title = "AI Trade Assistant"
 
@@ -69,21 +86,21 @@ sidebar = html.Div([
         # --- 模型架构解耦配置 ---
         html.H6("流水线模型配置", className="text-muted fw-bold mb-2", style={"fontSize": "0.8rem", "letterSpacing": "1px"}),
         
-        html.Label("1. 基础/初筛模型", className="small fw-bold text-secondary mb-1"),
+        html.Label("1. 基础/初筛模型 (Actor)", className="small fw-bold text-secondary mb-1"),
         dbc.Select(id="dropdown-flash-model", options=MODEL_OPTIONS, value=default_flash_model, className="mb-2", size="sm"),
         
         dbc.Checklist(options=[{"label": "2. 启用 Pro 模型 (或裁判)", "value": 1}], value=[1], id="switch-use-pro", switch=True, className="mb-1 text-secondary small fw-bold"),
-        html.Label("选择 Pro / 裁判模型", className="small fw-bold text-secondary mb-1"),
+        html.Label("选择 Pro / 裁判模型 (Judge)", className="small fw-bold text-secondary mb-1"),
         dbc.Select(id="dropdown-pro-model", options=MODEL_OPTIONS, value=default_pro_model, className="mb-2", size="sm"),
 
         dbc.Checklist(options=[{"label": "3. 启用双重筛选过滤", "value": 1}], value=[1], id="switch-dual-filter", switch=True, className="mb-2 text-secondary small fw-bold"),
 
-        # --- 【新增】多模型议事配置 ---
+        # --- 【修改】多模型议事配置 -> 多 Agent 议事配置 ---
         html.Hr(style={"margin": "10px 0", "opacity": "0.15"}),
-        html.H6("多模型议事 (MoA)", className="text-muted fw-bold mb-2", style={"fontSize": "0.8rem", "letterSpacing": "1px", "color": "#e64980"}),
+        html.H6("多大师议事会 (MoA)", className="text-muted fw-bold mb-2", style={"fontSize": "0.8rem", "letterSpacing": "1px", "color": "#e64980"}),
         dbc.Checklist(options=[{"label": "启用 AI 裁判委员会", "value": 1}], value=[], id="switch-use-moa", switch=True, className="mb-1 text-secondary small fw-bold"),
-        html.Label("选择参会模型 (建议 2-4 个)", className="small fw-bold text-secondary mb-1"),
-        dcc.Dropdown(id="dropdown-committee-models", options=MODEL_OPTIONS, multi=True, placeholder="选择研究员模型...", className="mb-3", style={"fontSize": "0.8rem"}),
+        html.Label("选择参会大师 (Agent 角色)", className="small fw-bold text-secondary mb-1"),
+        dcc.Dropdown(id="dropdown-committee-agents", options=AGENT_OPTIONS, multi=True, placeholder="选择大师角色...", className="mb-3", style={"fontSize": "0.8rem"}),
 
         dbc.Button("开始分析", id="btn-analyze", color="primary", className="w-100 fw-bold", size="sm", style={"borderRadius": "4px", "backgroundColor": "#4c6ef5", "border": "none"}),
         html.Div(id="random-msg", className="mt-2 small text-danger")
@@ -201,11 +218,11 @@ def update_table(active_tab): return load_daily_table_by_date(active_tab) if act
     [Input("btn-analyze", "n_clicks"), Input("daily-table", "active_cell")],
     [State("input-stock-code", "value"), 
      State("dropdown-flash-model", "value"), State("switch-use-pro", "value"), State("dropdown-pro-model", "value"), State("switch-dual-filter", "value"),
-     State("switch-use-moa", "value"), State("dropdown-committee-models", "value"), # 新增 MoA 状态获取
+     State("switch-use-moa", "value"), State("dropdown-committee-agents", "value"), # 【修改】
      State("input-position", "value"), State("input-cost", "value"), State("daily-table", "derived_viewport_data"), State("date-tabs", "active_tab")],
     prevent_initial_call=True
 )
-def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_pro_switch, pro_model, dual_filter_switch, moa_switch, committee_models, position, cost, table_data, active_tab):
+def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_pro_switch, pro_model, dual_filter_switch, moa_switch, committee_agents, position, cost, table_data, active_tab):
     ctx = dash.callback_context
     if not ctx.triggered: return [dash.no_update] * 18
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
@@ -213,7 +230,7 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     use_pro = bool(use_pro_switch)
     dual_filter = bool(dual_filter_switch)
     use_moa = bool(moa_switch)
-    committee_models = committee_models if committee_models else []
+    committee_agents = committee_agents if committee_agents else []
 
     # 解析模型展示名称（兼容 MoA 标签）
     def get_display_model_name(tag):
@@ -379,46 +396,62 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     else:
         res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=flash_model)
 
-    # 【二、 高级决议阶段：单模型 vs. 多模型议事(MoA)】
+    # 【二、 高级决议阶段：多 Agent 大师角色扮演 vs 单模型】
     if run_pro: 
-        if use_moa and len(committee_models) > 0:
-            print(f"🚀 触发 MoA 议事机制，正在并发呼叫委员会模型: {committee_models}...")
+        if use_moa and len(committee_agents) > 0:
+            print(f"🚀 触发大师理事会，基座模型 [{flash_model}] 正在扮演以下大师并发分析: {committee_agents}...")
             committee_results = {}
-            # 并发请求参会模型获取独立意见
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(committee_models)) as executor:
-                futures = {executor.submit(get_LLM_message, system_content=sys_content, user_message=user_msg, model_id=mid): mid for mid in committee_models}
+            
+            # 【关键】：从基础系统提示词中提取“强制输出格式”，确保大师也能乖乖输出 JSON
+            format_idx = sys_content.find("【决策过程与输出规范】")
+            format_rules = sys_content[format_idx:] if format_idx != -1 else sys_content
+            
+            def agent_task(agent_name):
+                try:
+                    with open(f"agents_text/{agent_name}.txt", "r", encoding="utf-8") as f:
+                        agent_persona = f.read()
+                    # 融合大师人设与强制输出规范
+                    agent_sys_content = f"{agent_persona}\n\n====================\n以下是系统级硬性约束，你必须严格遵守：\n{format_rules}"
+                    # 使用设定的基础/初筛模型（Actor）来扮演大师
+                    return get_LLM_message(system_content=agent_sys_content, user_message=user_msg, model_id=flash_model)
+                except Exception as e:
+                    return f"该大师 ({agent_name}) 分析失败：{e}"
+
+            # 并发请求基础模型获取大师们的独立意见
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(committee_agents)) as executor:
+                futures = {executor.submit(agent_task, agent_name): agent_name for agent_name in committee_agents}
                 for future in concurrent.futures.as_completed(futures):
-                    mid = futures[future]
+                    agent_name = futures[future]
                     try:
-                        committee_results[mid] = future.result()
+                        committee_results[agent_name] = future.result()
                     except Exception as e:
-                        print(f"⚠️ {mid} 议事失败: {e}")
-                        committee_results[mid] = f"该模型分析失败：{e}"
+                        print(f"⚠️ {agent_name} 议事失败: {e}")
+                        committee_results[agent_name] = f"该大师分析失败：{e}"
             
             # 组装 Meta-Prompt (裁判提示词)
             judge_msg = f"{user_msg}\n\n"
             judge_msg += "=================================\n"
             judge_msg += "【投资总监（AI裁判）专属决议指令】\n"
-            judge_msg += "以上是客观标的数据。以下是你的多位顶级研究员（不同AI模型）针对该数据给出的独立分析和 JSON 报告：\n\n"
+            judge_msg += "以上是客观标的数据。以下是多位顶尖投资大师（不同交易流派的 Agent）针对该数据给出的独立分析和 JSON 报告：\n\n"
             
-            for mid, res in committee_results.items():
-                m_name = MODEL_CONFIGS.get(mid, {}).get('name', mid)
-                judge_msg += f"--- 研究员模型：{m_name} 的意见 ---\n{res}\n\n"
+            for agent_name, res in committee_results.items():
+                display_name = agent_name.replace("_", " ")
+                judge_msg += f"--- 投资大师：{display_name} 的意见 ---\n{res}\n\n"
                 
             judge_msg += "作为量化基金的投资总监，你拥有最终拍板权。请严格按照以下【核心裁判原则】进行综合决策：\n"
-            judge_msg += "1. 事实核查先行（零容忍数据幻觉）：必须先核对研究员引用的数据是否与上文提供的【客观标的数据】完全一致。对于任何基于虚构数据得出的结论，必须直接一票否决。\n"
-            judge_msg += "2. 寻找非共识的正确：重点审视研究员之间的【分歧点】。如果少数派指出了隐含的风控隐患，且多数派未能有效应对，应果断采纳少数派意见。\n"
+            judge_msg += "1. 事实核查先行（零容忍数据幻觉）：必须先核对大师引用的数据是否与上文提供的【客观标的数据】完全一致。对于任何基于虚构数据得出的结论，必须直接一票否决。\n"
+            judge_msg += "2. 寻找非共识的正确与流派交叉验证：重点审视大师之间的【分歧点】。例如，当价值派（如巴菲特）与趋势派（如利弗莫尔）在特定点位达成共识时，该决策置信度极高；若出现严重分歧，需判断当前市场环境更适用哪种流派。\n"
             judge_msg += "3. 拒绝无效瘫痪（果断决策）：不要因为存在分歧就本能地退缩到‘观望’。在剔除幻觉意见后，评估盈亏比，勇敢给出具体的买入/卖出、观望指令和点位。\n\n"
             judge_msg += "请给出最终决策。你必须在 JSON 的 '原因' 字段中分段输出：\n"
-            judge_msg += "【事实核查与幻觉剔除】：简述是否有研究员引用了错误数据。\n"
-            judge_msg += "【共识与核心分歧】：简述各方有效观点的交锋点。\n"
-            judge_msg += "【总监拍板逻辑】：详细说明你最终支持哪一方的深度理由。\n"
+            judge_msg += "【事实核查与幻觉剔除】：简述是否有大师引用了错误数据。\n"
+            judge_msg += "【大师观点交锋】：简述各流派有效观点的交锋与共鸣点。\n"
+            judge_msg += "【总监拍板逻辑】：详细说明你最终的综合裁决理由。\n"
             judge_msg += "注意：你的输出必须是一个单一的、严格符合原定系统提示词规范的 JSON 对象！\n"
 
             # 呼叫裁判模型进行最终裁决
             print(f"⚖️ 正在请求裁判模型 [{pro_model}] 进行最终综合拍板...")
             res_text = get_LLM_message(system_content=sys_content, user_message=judge_msg, model_id=pro_model)
-            model_tag = f"MoA-{len(committee_models)}议事-{pro_model}"
+            model_tag = f"MoA-{len(committee_agents)}大师-{pro_model}"
             
         else:
             # 原有的单发 Pro 模型逻辑
