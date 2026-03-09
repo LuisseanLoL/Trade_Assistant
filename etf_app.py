@@ -10,6 +10,7 @@ import re
 import json_repair
 import glob
 import random
+import concurrent.futures  # 新增并发库用于多模型议事
 from dotenv import load_dotenv
 
 # 加载环境变量
@@ -192,11 +193,18 @@ sidebar = html.Div([
         html.Label("1. 基础/初筛模型", className="small fw-bold text-secondary mb-1"),
         dbc.Select(id="dropdown-flash-model", options=MODEL_OPTIONS, value=default_flash_model, className="mb-2", size="sm"),
         
-        dbc.Checklist(options=[{"label": "2. 启用 Pro 高级模型", "value": 1}], value=[1], id="switch-use-pro", switch=True, className="mb-1 text-secondary small fw-bold"),
-        html.Label("选择 Pro 模型", className="small fw-bold text-secondary mb-1"),
+        dbc.Checklist(options=[{"label": "2. 启用 Pro 模型 (或裁判)", "value": 1}], value=[1], id="switch-use-pro", switch=True, className="mb-1 text-secondary small fw-bold"),
+        html.Label("选择 Pro / 裁判模型", className="small fw-bold text-secondary mb-1"),
         dbc.Select(id="dropdown-pro-model", options=MODEL_OPTIONS, value=default_pro_model, className="mb-2", size="sm"),
 
-        dbc.Checklist(options=[{"label": "3. 启用双重筛选", "value": 1}], value=[1], id="switch-dual-filter", switch=True, className="mb-3 text-secondary small fw-bold"),
+        dbc.Checklist(options=[{"label": "3. 启用双重筛选", "value": 1}], value=[1], id="switch-dual-filter", switch=True, className="mb-2 text-secondary small fw-bold"),
+
+        # --- 【新增】多模型议事配置 ---
+        html.Hr(style={"margin": "10px 0", "opacity": "0.15"}),
+        html.H6("多模型议事 (MoA)", className="text-muted fw-bold mb-2", style={"fontSize": "0.8rem", "letterSpacing": "1px", "color": "#e64980"}),
+        dbc.Checklist(options=[{"label": "启用 AI 裁判委员会", "value": 1}], value=[], id="switch-use-moa", switch=True, className="mb-1 text-secondary small fw-bold"),
+        html.Label("选择参会模型 (建议 2-4 个)", className="small fw-bold text-secondary mb-1"),
+        dcc.Dropdown(id="dropdown-committee-models", options=MODEL_OPTIONS, multi=True, placeholder="选择研究员模型...", className="mb-3", style={"fontSize": "0.8rem"}),
 
         dbc.Button("开始分析 ETF", id="btn-analyze", color="primary", className="w-100 fw-bold", size="sm", style={"borderRadius": "4px", "backgroundColor": "#4c6ef5", "border": "none"}),
         html.Div(id="random-msg", className="mt-2 small text-danger")
@@ -315,19 +323,28 @@ def update_table(active_tab): return load_etf_daily_table_by_date(active_tab) if
     [Input("btn-analyze", "n_clicks"), Input("daily-table", "active_cell")],
     [State("input-stock-code", "value"), 
      State("dropdown-flash-model", "value"), State("switch-use-pro", "value"), State("dropdown-pro-model", "value"), State("switch-dual-filter", "value"),
+     State("switch-use-moa", "value"), State("dropdown-committee-models", "value"), # 新增 MoA 状态获取
      State("input-position", "value"), State("input-cost", "value"), State("daily-table", "derived_viewport_data"), State("date-tabs", "active_tab")],
     prevent_initial_call=True
 )
-def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_pro_switch, pro_model, dual_filter_switch, position, cost, table_data, active_tab):
+def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_pro_switch, pro_model, dual_filter_switch, moa_switch, committee_models, position, cost, table_data, active_tab):
     ctx = dash.callback_context
     if not ctx.triggered: return [dash.no_update] * 18
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
     use_pro = bool(use_pro_switch)
     dual_filter = bool(dual_filter_switch)
+    use_moa = bool(moa_switch)
+    committee_models = committee_models if committee_models else []
 
+    # 解析模型展示名称（兼容 MoA 标签）
     def get_display_model_name(tag):
         if not tag: return "-"
+        if tag.startswith("MoA-"):
+            parts = tag.split("-")
+            if len(parts) >= 3:
+                p_name = MODEL_CONFIGS.get(parts[2], {}).get('name', parts[2])
+                return f"【决议】{p_name}"
         if tag.startswith("D-"):
             parts = tag.split("-")
             if len(parts) >= 3:
@@ -465,10 +482,54 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     else:
         res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=flash_model)
 
+    # 【高级决议阶段：单模型 vs. 多模型议事(MoA)】
     if run_pro: 
-        res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=pro_model)
-    
-    model_tag = f"D-{flash_model}-{pro_model}" if (run_pro and dual_filter) else (pro_model if run_pro else flash_model)
+        if use_moa and len(committee_models) > 0:
+            print(f"🚀 触发 MoA 议事机制，正在并发呼叫委员会模型: {committee_models}...")
+            committee_results = {}
+            # 并发请求参会模型获取独立意见
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(committee_models)) as executor:
+                futures = {executor.submit(get_LLM_message, system_content=sys_content, user_message=user_msg, model_id=mid): mid for mid in committee_models}
+                for future in concurrent.futures.as_completed(futures):
+                    mid = futures[future]
+                    try:
+                        committee_results[mid] = future.result()
+                    except Exception as e:
+                        print(f"⚠️ {mid} 议事失败: {e}")
+                        committee_results[mid] = f"该模型分析失败：{e}"
+            
+            # 组装 Meta-Prompt (裁判提示词)
+            judge_msg = f"{user_msg}\n\n"
+            judge_msg += "=================================\n"
+            judge_msg += "【投资总监（AI裁判）专属决议指令】\n"
+            judge_msg += "以上是客观标的数据。以下是你的多位顶级研究员（不同AI模型）针对该数据给出的独立分析和 JSON 报告：\n\n"
+            
+            for mid, res in committee_results.items():
+                m_name = MODEL_CONFIGS.get(mid, {}).get('name', mid)
+                judge_msg += f"--- 研究员模型：{m_name} 的意见 ---\n{res}\n\n"
+                
+            judge_msg += "作为量化基金的投资总监，你拥有最终拍板权。请严格按照以下【核心裁判原则】进行综合决策：\n"
+            judge_msg += "1. 事实核查先行（零容忍数据幻觉）：必须先核对研究员引用的数据是否与上文提供的【客观标的数据】完全一致。对于任何基于虚构数据得出的结论，必须直接一票否决。\n"
+            judge_msg += "2. 寻找非共识的正确：重点审视研究员之间的【分歧点】。如果少数派指出了隐含的风控隐患，且多数派未能有效应对，应果断采纳少数派意见。\n"
+            judge_msg += "3. 拒绝无效瘫痪（果断决策）：不要因为存在分歧就本能地退缩到‘观望’。在剔除幻觉意见后，评估盈亏比，勇敢给出具体的买入/卖出、观望指令和点位。\n\n"
+            judge_msg += "请给出最终决策。你必须在 JSON 的 '原因' 字段中分段输出：\n"
+            judge_msg += "【事实核查与幻觉剔除】：简述是否有研究员引用了错误数据。\n"
+            judge_msg += "【共识与核心分歧】：简述各方有效观点的交锋点。\n"
+            judge_msg += "【总监拍板逻辑】：详细说明你最终支持哪一方的深度理由。\n"
+            judge_msg += "注意：你的输出必须是一个单一的、严格符合原定系统提示词规范的 JSON 对象！\n"
+
+            # 呼叫裁判模型进行最终裁决
+            print(f"⚖️ 正在请求裁判模型 [{pro_model}] 进行最终综合拍板...")
+            res_text = get_LLM_message(system_content=sys_content, user_message=judge_msg, model_id=pro_model)
+            model_tag = f"MoA-{len(committee_models)}议事-{pro_model}"
+            
+        else:
+            # 原有的单发 Pro 模型逻辑
+            res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=pro_model)
+            model_tag = f"D-{flash_model}-{pro_model}" if dual_filter else pro_model
+    else:
+        model_tag = flash_model
+            
     disp_model = get_display_model_name(model_tag)
     
     os.makedirs(f"output_etf/{c_str}", exist_ok=True)

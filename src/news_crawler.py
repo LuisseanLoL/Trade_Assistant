@@ -1,5 +1,7 @@
 import os
 import re
+import time
+import random
 from bs4 import BeautifulSoup
 import akshare as ak
 from datetime import datetime, timedelta
@@ -63,18 +65,15 @@ def get_macro_news(current_date_str):
 
 def get_news_titles(symbol="600000", stock_name='浦发银行', max_news=20, save_txt=True, current_date='20250214'):
     """
-    获取并处理新闻标题 (使用 Playwright 无头浏览器绕过反爬)
-    参数:
-        symbol: 股票代码/指数名称
-        stock_name: 股票名称
-        max_news: 最大新闻数量
-        save_txt: 是否保存为文本文件
-        current_date: 当前日期，用于日志路径
-    返回:
-        包含标题和宏观摘要的字符串
+    获取并处理新闻标题 (包含内容与标题双搜索并集，并增加随机休眠防反爬)
     """
-    url = f"https://so.eastmoney.com/news/s?keyword={symbol}&type=content&sort=time"
-    titles = []
+    urls = [
+        f"https://so.eastmoney.com/news/s?keyword={symbol}&type=title&sort=time",
+        f"https://so.eastmoney.com/news/s?keyword={symbol}&type=content&sort=time",
+    ]
+    
+    all_news_data = []
+    seen_titles = set()
 
     try:
         print(f'🚀 开始获取 {symbol} ({stock_name}) 的新闻标题...')
@@ -85,99 +84,106 @@ def get_news_titles(symbol="600000", stock_name='浦发银行', max_news=20, sav
                 viewport={"width": 1920, "height": 1080}
             )
             page = context.new_page()
-            
-            # 隐藏 webdriver 特征
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
-            try:
-                page.goto(url, wait_until="domcontentloaded", timeout=45000)
-            except Exception as e:
-                print(f"页面加载超时提示(可忽略): {e}")
-            
-            while len(titles) < max_news:
+            for i, url in enumerate(urls):
+                # 🛑 新增：在抓取第二个 URL 之前，随机休眠 2 到 4 秒
+                if i > 0:
+                    sleep_time = random.uniform(2.0, 4.0)
+                    print(f"⏳ 切换搜索类型，随机休眠 {sleep_time:.2f} 秒...")
+                    time.sleep(sleep_time)
+
+                print(f"👉 正在抓取节点: {url.split('type=')[1].split('&')[0]}")
                 try:
-                    page.wait_for_selector('.news_item', timeout=15000)
-                except Exception:
-                    print("未找到新闻列表(.news_item)，可能无数据或被高级反爬拦截。")
-                    break
-                    
-                html = page.content()
-                soup = BeautifulSoup(html, 'html.parser')
-                items = soup.select('.news_item')
+                    page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                except Exception as e:
+                    print(f"页面加载超时提示(可忽略): {e}")
                 
-                if not items:
-                    break
-                    
-                new_titles_found = False
-                for item in items:
-                    if len(titles) >= max_news:
+                collected_count = 0 
+                
+                while collected_count < max_news:
+                    try:
+                        page.wait_for_selector('.news_item', timeout=15000)
+                    except Exception:
+                        print("未找到新闻列表(.news_item)，可能无数据或被高级反爬拦截。")
                         break
                         
-                    a_tag = item.select_one('.news_item_t a') or item.find('a')
-                    if not a_tag:
-                        continue
+                    html = page.content()
+                    soup = BeautifulSoup(html, 'html.parser')
+                    items = soup.select('.news_item')
+                    
+                    if not items:
+                        break
                         
-                    title = a_tag.get_text(strip=True)
-                    
-                    # 🔴 新增：获取日期
-                    # 获取该新闻块的所有文本，并用空格分隔
-                    item_text = item.get_text(separator=' ', strip=True)
-                    # 使用正则匹配类似 "2026-03-06 18:25:35" 的时间戳
-                    date_match = re.search(r'\d{4}-\d{2}-\d{2}', item_text)
-                    date_str = date_match.group(0) if date_match else "未知日期"
-                    
-                    if len(title) > 4:
-                        # 将日期和标题拼接，例如："[2026-03-06 18:25:35] A股史上第一个..."
-                        formatted_item = f"[{date_str}] {title}"
+                    new_titles_found = False
+                    for item in items:
+                        if collected_count >= max_news:
+                            break
+                            
+                        a_tag = item.select_one('.news_item_t a') or item.find('a')
+                        if not a_tag:
+                            continue
+                            
+                        title = a_tag.get_text(strip=True)
                         
-                        # 检查排重（这里只用标题排重比较好，防止同一条新闻更新了时间戳）
-                        if not any(title in existing_item for existing_item in titles):
-                            titles.append(formatted_item)
-                            new_titles_found = True
+                        item_text = item.get_text(separator=' ', strip=True)
+                        date_match = re.search(r'\d{4}-\d{2}-\d{2}', item_text)
+                        date_str = date_match.group(0) if date_match else "未知日期"
                         
-                if len(titles) >= max_news:
-                    break
-                
-                if not new_titles_found:
-                    break
+                        if len(title) > 4:
+                            formatted_item = f"[{date_str}] {title}"
+                            
+                            if title not in seen_titles:
+                                seen_titles.add(title)
+                                all_news_data.append((date_str, title, formatted_item))
+                                collected_count += 1
+                                new_titles_found = True
+                                
+                    if collected_count >= max_news:
+                        break
+                    if not new_titles_found:
+                        break
+                        
+                    next_btn_1 = page.locator("a:text-is('>')").first
+                    next_btn_2 = page.locator("a:text-is('下一页')").first
                     
-                next_btn_1 = page.locator("a:text-is('>')").first
-                next_btn_2 = page.locator("a:text-is('下一页')").first
-                
-                if next_btn_1.is_visible():
-                    next_btn_1.click()
-                elif next_btn_2.is_visible():
-                    next_btn_2.click()
-                else:
-                    print("没有更多新闻页面了。")
-                    break
-                    
-                page.wait_for_timeout(2000)
+                    if next_btn_1.is_visible():
+                        next_btn_1.click()
+                    elif next_btn_2.is_visible():
+                        next_btn_2.click()
+                    else:
+                        print("没有更多新闻页面了。")
+                        break
+                        
+                    # 🛑 修改：将固定的 page.wait_for_timeout 改为随机 time.sleep
+                    page_sleep = random.uniform(1.5, 3.5)
+                    time.sleep(page_sleep)
 
             browser.close()
 
     except Exception as e:
         print(f"抓取操作失败: {e}")
 
-    # 截取所需数量并生成个股新闻文本
-    text_content = '\n'.join(titles[:max_news]) if titles else ""
+    # 并集排序与截取
+    all_news_data.sort(key=lambda x: x[0] if x[0] != "未知日期" else "0000-00-00", reverse=True)
+    final_titles = [item[2] for item in all_news_data[:max_news]]
+    text_content = '\n'.join(final_titles) if final_titles else ""
     
     if not text_content:
         print(f"未获取到 {symbol} 的个股新闻数据")
 
-    # --- 核心新增：追加宏观财经早餐 ---
-    macro_news_text = get_macro_news(current_date)
-    if macro_news_text:
-        if text_content:
-            text_content = text_content + "\n\n" + macro_news_text
-        else:
-            text_content = macro_news_text
+    # 宏观财经早餐 (这里保留了你的原逻辑)
+    try:
+        macro_news_text = get_macro_news(current_date)
+        if macro_news_text:
+            text_content = (text_content + "\n\n" + macro_news_text) if text_content else macro_news_text
+    except NameError:
+        pass # 静默跳过未定义的函数错误，避免打断主体流程
 
-    # 创建存储目录
+    # 保存文件
     news_dir = f"log/stock_news/{current_date}"
     os.makedirs(news_dir, exist_ok=True)
     
-    # 保存文件
     if save_txt and text_content:
         filename = f"{symbol}_{stock_name}_News_{current_date}.txt"
         filepath = os.path.join(news_dir, filename)
@@ -189,7 +195,6 @@ def get_news_titles(symbol="600000", stock_name='浦发银行', max_news=20, sav
             print(f"保存文件失败: {e}")
         
     return text_content
-
 
 # 测试代码
 if __name__ == "__main__":
