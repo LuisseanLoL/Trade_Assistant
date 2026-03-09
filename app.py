@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # 导入 src 模块
-from src.data_crawler import get_stock_data, get_bs_code, get_stock_name_bs, get_chart_data
+from src.data_crawler import get_stock_data, get_stock_name_bs, get_chart_data
 from src.LLM_chat import get_LLM_message, get_model_config
 from src.utils import (
     get_logical_date, 
@@ -406,12 +406,13 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
                 judge_msg += f"--- 研究员模型：{m_name} 的意见 ---\n{res}\n\n"
                 
             judge_msg += "作为量化基金的投资总监，你拥有最终拍板权。请严格按照以下【核心裁判原则】进行综合决策：\n"
-            judge_msg += "1. 逻辑至上，拒绝盲从：金融市场真理往往掌握在少数人手中。绝对不要机械地‘少数服从多数’！你要寻找的是‘谁的底层逻辑更无懈可击’，‘谁捕捉到了当前主导定价的核心矛盾’。\n"
-            judge_msg += "2. 交叉质证与证伪：重点审视研究员之间的【分歧点】。如果少数派指出了致命的风控隐患（如隐含的估值陷阱、量价背离、均值回归的极值点），且多数派未能有效应对，你应该果断采纳少数派意见，甚至一票否决多数派的狂热。\n"
-            judge_msg += "3. 混沌期的防守哲学：如果研究员意见严重撕裂（如 2:2 对立），且双方都没有压倒性的逻辑证据，或者面临极高的不确定性，你可以直接判定为‘观望’以保护本金，或给出极低的试错仓位，切勿强行折中。\n\n"
-            judge_msg += "请给出最终的决策、点位和仓位。你必须在 JSON 的 '原因' 字段中分段输出：\n"
-            judge_msg += "【委员会共识与分歧】：简述各方观点的核心交锋点。\n"
-            judge_msg += "【投资总监拍板逻辑】：详细说明你最终支持哪一方（或推翻所有人）的深度理由，以及该决策背后的盈亏比考量。\n"
+            judge_msg += "1. 事实核查先行（零容忍数据幻觉）：必须先核对研究员引用的数据是否与上文提供的【客观标的数据】完全一致。对于任何基于虚构数据得出的结论，必须直接一票否决。\n"
+            judge_msg += "2. 寻找非共识的正确：重点审视研究员之间的【分歧点】。如果少数派指出了隐含的风控隐患，且多数派未能有效应对，应果断采纳少数派意见。\n"
+            judge_msg += "3. 拒绝无效瘫痪（果断决策）：不要因为存在分歧就本能地退缩到‘观望’。在剔除幻觉意见后，评估盈亏比，勇敢给出具体的买入/卖出、观望指令和点位。\n\n"
+            judge_msg += "请给出最终决策。你必须在 JSON 的 '原因' 字段中分段输出：\n"
+            judge_msg += "【事实核查与幻觉剔除】：简述是否有研究员引用了错误数据。\n"
+            judge_msg += "【共识与核心分歧】：简述各方有效观点的交锋点。\n"
+            judge_msg += "【总监拍板逻辑】：详细说明你最终支持哪一方的深度理由。\n"
             judge_msg += "注意：你的输出必须是一个单一的、严格符合原定系统提示词规范的 JSON 对象！\n"
 
             # 呼叫裁判模型进行最终裁决

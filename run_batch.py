@@ -99,7 +99,7 @@ def main():
                 print("⚠️ 股票代码不能为空，请重新输入！")
         SPECIFIC_BATCH = stocks_input.split()
 
-    # --- 2.2 动态加载模型并配置双筛漏斗 ---
+    # --- 2.2 动态加载模型并配置双筛漏斗与 MoA 议事 ---
     model_configs = get_model_config()
     if not model_configs:
         print("\n❌ 未检测到可用的模型配置，请检查 .env 文件中的 ACTIVE_MODELS 字段！")
@@ -108,34 +108,56 @@ def main():
     model_choices = [Choice(cfg['name'], value=mid) for mid, cfg in model_configs.items()]
 
     flash_model = questionary.select(
-        "【步骤 2】请选择基础/初筛模型 (Flash Model)：",
+        "【步骤 2】请选择【第一阶段：初筛模型】(用于快速扫盘过滤)：",
         choices=model_choices,
         pointer="👉"
     ).ask()
     if flash_model is None: return
 
     use_pro = questionary.confirm(
-        "【步骤 3】是否启用 Pro 高级模型进行深度测算？", 
+        "【步骤 3】是否启用【第二阶段：高级终审】？\n(仅当初筛给出买入/动作信号，或当前有持仓时才触发)", 
         default=True
     ).ask()
     if use_pro is None: return
 
+    # 变量初始化
     pro_model = flash_model
-    dual_filter = False
+    dual_filter = use_pro # 漏斗架构下，双筛绑定为True
+    use_moa = False
+    committee_models = []
 
     if use_pro:
-        pro_model = questionary.select(
-            "【步骤 3.1】请选择高级复核模型 (Pro Model)：",
-            choices=model_choices,
-            pointer="👉"
-        ).ask()
-        if pro_model is None: return
-
-        dual_filter = questionary.confirm(
-            "【步骤 3.2】是否启用双重筛选 (仅空仓且初筛触发动作时才调用 Pro)(默认为是）？", 
+        use_moa = questionary.confirm(
+            "【步骤 3.1】终审机制：是否升级为【MoA 多模型联合议事】？\n(选No则使用单发大模型复盘)", 
             default=True
         ).ask()
-        if dual_filter is None: return
+        if use_moa is None: return
+
+        if use_moa:
+            committee_models = questionary.checkbox(
+                "请选择【MoA：打工研究员】(建议异构，2-4个)：",
+                choices=model_choices
+            ).ask()
+            if committee_models is None: return
+            if not committee_models:
+                print("⚠️ 未选择任何参会模型，已自动退化为单模型模式。")
+                use_moa = False
+            
+            if use_moa:
+                pro_model = questionary.select(
+                    "请选择【MoA：最终拍板裁判】(建议用推理最强模型，如 Gemini-Pro)：",
+                    choices=model_choices,
+                    pointer="👉"
+                ).ask()
+                if pro_model is None: return
+        
+        if not use_moa:
+            pro_model = questionary.select(
+                "请选择【单发：终审高级模型】(如 DeepSeek 或 Gemini-Pro)：",
+                choices=model_choices,
+                pointer="👉"
+            ).ask()
+            if pro_model is None: return
 
     print("\n" + "="*50 + "\n")
 
@@ -182,7 +204,14 @@ def main():
 
     print(f"\n=== 🚀 开始量化批量分析任务 ===")
     print(f"逻辑归属日期: {current_date}")
-    print(f"初筛模型: {flash_model} | 高级模型: {pro_model if use_pro else '未启用'} | 双筛架构: {'启用' if dual_filter else '关闭'}")
+    print(f"初筛模型: {flash_model}")
+    if use_pro:
+        if use_moa:
+            print(f"终审架构: 【漏斗触发 + MoA议事】 | 参会研究员: {committee_models} | 最终裁判: {pro_model}")
+        else:
+            print(f"终审架构: 【漏斗触发 + 单发复盘】 | 决策模型: {pro_model}")
+    else:
+        print(f"终审架构: 未启用 (仅初筛)")
     print(f"最终待分析股票池 ({len(batch)}只): {batch}")
     print("===================================\n")
 
@@ -200,7 +229,7 @@ def main():
         print(f">>> 开始处理股票: {code} | 当前持仓: {current_position} 股 | 成本: {current_cost} 元")
         
         try:
-            # 调用最新的 worker.process，并传入模型解耦参数
+            # 这里的参数签名已包含 use_moa 和 committee_models 透传给 worker.process
             processed_result = process(
                 stock_code=code,
                 stock_position=current_position,
@@ -211,7 +240,9 @@ def main():
                 flash_model=flash_model,
                 use_pro=use_pro,
                 pro_model=pro_model,
-                dual_filter=dual_filter
+                dual_filter=dual_filter,
+                use_moa=use_moa,               
+                committee_models=committee_models 
             )
 
             if processed_result is SHOULD_SKIP:

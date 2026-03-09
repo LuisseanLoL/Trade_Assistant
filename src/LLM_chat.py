@@ -148,7 +148,8 @@ def gemini_chat(system_content, user_message, model, api_key, use_tools=False):
     config_kwargs = {
         "response_mime_type": "text/plain",
         "system_instruction": system_content,
-        "temperature": 0.8,
+        "temperature": 1.0,
+        "top_p": 1.0,
     }
     if tools:
         config_kwargs["tools"] = tools
