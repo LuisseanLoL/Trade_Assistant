@@ -120,7 +120,7 @@ def main():
     model_choices = [Choice(cfg['name'], value=mid) for mid, cfg in model_configs.items()]
 
     flash_model = questionary.select(
-        "【步骤 2】请选择【第一阶段：初筛模型】(用于快速扫盘过滤，兼任大师扮演者)：",
+        "【步骤 2】请选择【第一阶段：初筛模型】(用于快速扫盘过滤，过滤无交易价值标的)：",
         choices=model_choices,
         pointer="👉"
     ).ask()
@@ -134,6 +134,7 @@ def main():
 
     # 变量初始化
     pro_model = flash_model
+    committee_model = flash_model # 初始化议事模型变量
     dual_filter = use_pro # 漏斗架构下，双筛绑定为True
     use_moa = False
     committee_agents = []
@@ -152,7 +153,7 @@ def main():
                 use_moa = False
             else:
                 committee_agents = questionary.checkbox(
-                    "请选择【MoA：参会大师 (Agent 角色)】(由初筛模型扮演，建议2-4个)：",
+                    "请选择【MoA：参会大师 (Agent 角色)】(建议2-4个)：",
                     choices=agent_choices
                 ).ask()
                 
@@ -162,6 +163,14 @@ def main():
                     use_moa = False
             
             if use_moa:
+                # 【新增】单独选择扮演大师的议事会模型
+                committee_model = questionary.select(
+                    "请选择【MoA：议事会模型】(并发扮演上述大师角色)：",
+                    choices=model_choices,
+                    pointer="👉"
+                ).ask()
+                if committee_model is None: return
+
                 pro_model = questionary.select(
                     "请选择【MoA：最终拍板裁判】(投资总监，建议用推理最强模型)：",
                     choices=model_choices,
@@ -225,7 +234,7 @@ def main():
     print(f"初筛模型(Actor): {flash_model}")
     if use_pro:
         if use_moa:
-            print(f"终审架构: 【漏斗触发 + MoA多大师议事】 | 参会大师: {committee_agents} | 最终裁判(Judge): {pro_model}")
+            print(f"终审架构: 【漏斗触发 + MoA多大师议事】 | 议事模型: {committee_model} | 参会大师: {committee_agents} | 最终裁判(Judge): {pro_model}")
         else:
             print(f"终审架构: 【漏斗触发 + 单发复盘】 | 决策模型: {pro_model}")
     else:
@@ -247,7 +256,7 @@ def main():
         print(f">>> 开始处理股票: {code} | 当前持仓: {current_position} 股 | 成本: {current_cost} 元")
         
         try:
-            # 透传 committee_agents 替代原先的 committee_models
+            # 透传新增的 committee_model 参数
             processed_result = process(
                 stock_code=code,
                 stock_position=current_position,
@@ -259,7 +268,8 @@ def main():
                 use_pro=use_pro,
                 pro_model=pro_model,
                 dual_filter=dual_filter,
-                use_moa=use_moa,               
+                use_moa=use_moa,
+                committee_model=committee_model, # 【新增】透传给 worker
                 committee_agents=committee_agents 
             )
 

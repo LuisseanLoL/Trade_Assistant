@@ -62,7 +62,7 @@ def get_baostock_k_data(stock_code: str, beg: str, end: str) -> pd.DataFrame:
     for col in ["open", "high", "low", "close", "volume", "amount", "turn", "pctChg"]:
         if col in k_data.columns: k_data[col] = pd.to_numeric(k_data[col], errors='coerce')
             
-    k_data = k_data.rename(columns={'date': '日期', 'open': '开盘', 'high': '最高', 'low': '最低', 'close': '收盘', 'volume': '成交量', 'amount': '成交额', 'turn': '换手率', 'pctChg': '涨跌幅'})
+    k_data = k_data.rename(columns={'date': '日期', 'open': '开盘', 'high': '最高', 'low': '最低', 'close': '收盘', 'volume': '成交量', 'amount': '成交额', 'turn': '换手率', '涨跌幅': 'pctChg'})
     bs.logout()
     return k_data
 
@@ -77,8 +77,9 @@ def process(stock_code='600325',
             use_pro=True,
             pro_model='gemini_pro',
             dual_filter=True,
-            use_moa=False,           # 新增：是否启用多模型议事
-            committee_agents=None    # 新增：参会的大师角色(Agent)列表
+            use_moa=False,           
+            committee_model='gemini_flash', # 【新增】：议事会模型参数
+            committee_agents=None    
             ):
 
     stock_name = get_stock_name(stock_code)
@@ -153,7 +154,10 @@ def process(stock_code='600325',
     # ================= 阶段二：高级终审 (MoA 多大师 或 单发) =================
     if run_stage_2 and use_pro:
         if use_moa and committee_agents:
-            print(f"🚀 [{stock_code}] 触发 MoA 大师议事机制，基础模型 [{flash_model}] 正在并发扮演: {committee_agents}...")
+            # 加入保险机制，如果前端没传 committee_model，默认回退到 flash_model
+            actual_committee_model = committee_model if committee_model else flash_model
+            
+            print(f"🚀 [{stock_code}] 触发 MoA 大师议事机制，议事模型 [{actual_committee_model}] 正在并发扮演: {committee_agents}...")
             committee_results = {}
             
             # 【关键】：从基础系统提示词中提取“强制输出格式”
@@ -166,8 +170,8 @@ def process(stock_code='600325',
                         agent_persona = f.read()
                     # 融合大师人设与强制输出规范
                     agent_sys_content = f"{agent_persona}\n\n====================\n以下是系统级硬性约束，你必须严格遵守：\n{format_rules}"
-                    # 使用设定的基础/初筛模型（Actor）来扮演大师
-                    return get_LLM_message(system_content=agent_sys_content, user_message=user_message, model_id=flash_model)
+                    # 【核心修改】：使用指定的议事会模型（committee_model）来扮演大师
+                    return get_LLM_message(system_content=agent_sys_content, user_message=user_message, model_id=actual_committee_model)
                 except Exception as e:
                     return f"该大师 ({agent_name}) 分析失败：{e}"
 
