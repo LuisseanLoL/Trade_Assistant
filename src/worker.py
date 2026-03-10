@@ -78,7 +78,7 @@ def process(stock_code='600325',
             pro_model='gemini_pro',
             dual_filter=True,
             use_moa=False,           # 新增：是否启用多模型议事
-            committee_models=None    # 新增：参会的研究员模型列表
+            committee_agents=None    # 新增：参会的大师角色(Agent)列表
             ):
 
     stock_name = get_stock_name(stock_code)
@@ -136,9 +136,7 @@ def process(stock_code='600325',
                         run_stage_2 = True
                         print(f"🎯 初筛预警：发现疑似【{action}】信号！触发高级终审复核...")
                     else:
-                        # 👇 关键修改：把原来的 return SHOULD_SKIP 删掉，改成如下打印
                         print(f"💤 初筛结果：【{action}】，未触发高级议事，直接将初筛结论落库。")
-                        # 由于 run_stage_2 默认是 False，代码会自动跳过第二阶段，直接去底部执行保存文件和写CSV的动作
                 else:
                     run_stage_2 = True # 格式解析失败，防漏网，交由高级模型处理
             except Exception as e:
@@ -152,45 +150,61 @@ def process(stock_code='600325',
         print(f"\n📡 [{stock_code}] 模式设定为仅使用基础模型 ({flash_model})...")
         result_text = get_LLM_message(system_content=system_content, user_message=user_message, model_id=flash_model)
 
-    # ================= 阶段二：高级终审 (MoA 或 单发) =================
+    # ================= 阶段二：高级终审 (MoA 多大师 或 单发) =================
     if run_stage_2 and use_pro:
-        if use_moa and committee_models:
-            print(f"🚀 [{stock_code}] 触发 MoA 议事机制，正在并发呼叫委员会模型: {committee_models}...")
+        if use_moa and committee_agents:
+            print(f"🚀 [{stock_code}] 触发 MoA 大师议事机制，基础模型 [{flash_model}] 正在并发扮演: {committee_agents}...")
             committee_results = {}
-            # 并发请求参会模型获取独立意见
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(committee_models)) as executor:
-                futures = {executor.submit(get_LLM_message, system_content=system_content, user_message=user_message, model_id=mid): mid for mid in committee_models}
+            
+            # 【关键】：从基础系统提示词中提取“强制输出格式”
+            format_idx = system_content.find("【决策过程与输出规范】")
+            format_rules = system_content[format_idx:] if format_idx != -1 else system_content
+            
+            def agent_task(agent_name):
+                try:
+                    with open(f"agents_text/{agent_name}.txt", "r", encoding="utf-8") as f:
+                        agent_persona = f.read()
+                    # 融合大师人设与强制输出规范
+                    agent_sys_content = f"{agent_persona}\n\n====================\n以下是系统级硬性约束，你必须严格遵守：\n{format_rules}"
+                    # 使用设定的基础/初筛模型（Actor）来扮演大师
+                    return get_LLM_message(system_content=agent_sys_content, user_message=user_message, model_id=flash_model)
+                except Exception as e:
+                    return f"该大师 ({agent_name}) 分析失败：{e}"
+
+            # 并发请求参会大师获取独立意见
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(committee_agents)) as executor:
+                futures = {executor.submit(agent_task, agent_name): agent_name for agent_name in committee_agents}
                 for future in concurrent.futures.as_completed(futures):
-                    mid = futures[future]
+                    agent_name = futures[future]
                     try:
-                        committee_results[mid] = future.result()
+                        committee_results[agent_name] = future.result()
                     except Exception as e:
-                        print(f"⚠️ [{stock_code}] {mid} 议事失败: {e}")
-                        committee_results[mid] = f"该模型分析失败：{e}"
+                        print(f"⚠️ [{stock_code}] {agent_name} 议事失败: {e}")
+                        committee_results[agent_name] = f"该大师分析失败：{e}"
             
             # 组装最新打磨的“抗幻觉”版 Meta-Prompt
             judge_msg = f"{user_message}\n\n=================================\n"
             judge_msg += "【投资总监（AI裁判）专属决议指令】\n"
-            judge_msg += "以上是客观标的数据。以下是你的多位顶级研究员（不同AI模型）针对该数据给出的独立分析和 JSON 报告：\n\n"
+            judge_msg += "以上是客观标的数据。以下是多位顶尖投资大师（不同交易流派的 Agent）针对该数据给出的独立分析和 JSON 报告：\n\n"
             
-            for mid, res in committee_results.items():
-                m_name = get_model_config().get(mid, {}).get('name', mid)
-                judge_msg += f"--- 研究员模型：{m_name} 的意见 ---\n{res}\n\n"
+            for agent_name, res in committee_results.items():
+                display_name = agent_name.replace("_", " ")
+                judge_msg += f"--- 投资大师：{display_name} 的意见 ---\n{res}\n\n"
                 
             judge_msg += "作为量化基金的投资总监，你拥有最终拍板权。请严格按照以下【核心裁判原则】进行综合决策：\n"
-            judge_msg += "1. 事实核查先行（零容忍数据幻觉）：必须先核对研究员引用的数据是否与上文提供的【客观标的数据】完全一致。对于任何基于虚构数据得出的结论，必须直接一票否决。\n"
-            judge_msg += "2. 寻找非共识的正确：重点审视研究员之间的【分歧点】。如果少数派指出了隐含的风控隐患，且多数派未能有效应对，应果断采纳少数派意见。\n"
+            judge_msg += "1. 事实核查先行（零容忍数据幻觉）：必须先核对大师引用的数据是否与上文提供的【客观标的数据】完全一致。对于任何基于虚构数据得出的结论，必须直接一票否决。\n"
+            judge_msg += "2. 寻找非共识的正确与流派交叉验证：重点审视大师之间的【分歧点】。例如，当价值派（如巴菲特）与趋势派（如利弗莫尔）在特定点位达成共识时，该决策置信度极高；若出现严重分歧，需判断当前市场环境更适用哪种流派。\n"
             judge_msg += "3. 拒绝无效瘫痪（果断决策）：不要因为存在分歧就本能地退缩到‘观望’。在剔除幻觉意见后，评估盈亏比，勇敢给出具体的买入/卖出、观望指令和点位。\n\n"
             judge_msg += "请给出最终决策。你必须在 JSON 的 '原因' 字段中分段输出：\n"
-            judge_msg += "【事实核查与幻觉剔除】：简述是否有研究员引用了错误数据。\n"
-            judge_msg += "【共识与核心分歧】：简述各方有效观点的交锋点。\n"
-            judge_msg += "【总监拍板逻辑】：详细说明你最终支持哪一方的深度理由。\n"
+            judge_msg += "【事实核查与幻觉剔除】：简述是否有大师引用了错误数据。\n"
+            judge_msg += "【大师观点交锋】：简述各流派有效观点的交锋与共鸣点。\n"
+            judge_msg += "【总监拍板逻辑】：详细说明你最终的综合裁决理由。\n"
             judge_msg += "注意：你的输出必须是一个单一的、严格符合原定系统提示词规范的 JSON 对象！\n"
 
 
             print(f"⚖️ [{stock_code}] 正在请求裁判模型 [{pro_model}] 进行最终综合拍板...")
             result_text = get_LLM_message(system_content=system_content, user_message=judge_msg, model_id=pro_model)
-            model_tag = f"MoA-{pro_model}"
+            model_tag = f"MoA-{len(committee_agents)}大师-{pro_model}"
             print(f"✅ [{stock_code}] MoA 深度测算与复核完成！")
             
         else:
@@ -207,7 +221,7 @@ def process(stock_code='600325',
     configs = get_model_config()
     if model_tag.startswith("MoA-"):
         parts = model_tag.split("-")
-        disp_model = f"【决议】{configs.get(parts[1], {}).get('name', parts[1])}" if len(parts)>1 else model_tag
+        disp_model = f"【决议】{configs.get(parts[2], {}).get('name', parts[2])}" if len(parts) >= 3 else model_tag
     elif model_tag.startswith("D-"):
         parts = model_tag.split("-")
         disp_model = f"{configs.get(parts[2], {}).get('name', parts[2])}(双筛)" if len(parts) >= 3 else model_tag

@@ -1,5 +1,6 @@
 from openai import OpenAI
 import re
+import copy
 import time
 import os
 from google import genai
@@ -123,34 +124,70 @@ def get_model_config():
     if not active_models_str:
         return {}
     
-    # 提取模型ID列表
     model_ids = [m.strip() for m in active_models_str.split(",") if m.strip()]
     configs = {}
     
     for mid in model_ids:
         configs[mid] = {
             "id": mid,
-            "type": os.getenv(f"{mid}_TYPE", "openai").lower(),  # 'gemini' 还是 'openai' 兼容接口
-            "name": os.getenv(f"{mid}_NAME", mid),               # 显示在前端的名称
-            "model": os.getenv(f"{mid}_MODEL", ""),              # 实际请求的模型代号
+            "type": os.getenv(f"{mid}_TYPE", "openai").lower(),
+            "name": os.getenv(f"{mid}_NAME", mid),
+            "model": os.getenv(f"{mid}_MODEL", ""),
             "api_key": os.getenv(f"{mid}_API_KEY", ""),
             "base_url": os.getenv(f"{mid}_BASE_URL", None),
+            # 新增下面这行：读取是否为 Vertex 的标识
+            "is_vertex": os.getenv(f"{mid}_IS_VERTEX", "false").lower() == "true",
             "strip_think": os.getenv(f"{mid}_STRIP_THINK", "false").lower() == "true",
             "use_tools": os.getenv(f"{mid}_USE_TOOLS", "false").lower() == "true"
         }
     return configs
 
-def gemini_chat(system_content, user_message, model, api_key, use_tools=False):
+def gemini_chat(system_content, user_message, model, api_key, is_vertex=False, use_tools=False, schema=None):
     """处理 Google Gemini 模型"""
-    client = genai.Client(api_key=api_key)
+    client = genai.Client(api_key=api_key, vertexai=is_vertex)
     tools = [types.Tool(googleSearch=types.GoogleSearch())] if use_tools else None
     
     config_kwargs = {
-        "response_mime_type": "text/plain",
         "system_instruction": system_content,
         "temperature": 1.0,
         "top_p": 1.0,
     }
+    
+    if schema:
+        config_kwargs["response_mime_type"] = "application/json"
+        
+        # 【核心修复】：将 OpenAI 格式的 Schema 动态翻译为 Gemini 严格格式
+        gemini_schema = copy.deepcopy(schema["json_schema"]["schema"])
+        
+        def adapt_schema_for_gemini(node):
+            if isinstance(node, dict):
+                if 'type' in node:
+                    t = node['type']
+                    # 1. 处理 ["number", "null"] 这种列表形式
+                    if isinstance(t, list):
+                        if 'null' in t:
+                            node['nullable'] = True
+                            t = [x for x in t if x != 'null'][0] # 取出真正的数据类型
+                        else:
+                            t = t[0]
+                            
+                    # 2. Gemini 强制要求 type 为大写，例如 'NUMBER', 'STRING'
+                    if isinstance(t, str):
+                        node['type'] = t.upper()
+                        
+                # 递归处理所有子节点
+                for k, v in node.items():
+                    adapt_schema_for_gemini(v)
+            elif isinstance(node, list):
+                for item in node:
+                    adapt_schema_for_gemini(item)
+                    
+        # 执行转换
+        adapt_schema_for_gemini(gemini_schema)
+        config_kwargs["response_schema"] = gemini_schema
+    else:
+        config_kwargs["response_mime_type"] = "text/plain"
+
     if tools:
         config_kwargs["tools"] = tools
 
@@ -208,7 +245,9 @@ def get_LLM_message(system_content, user_message, model_id):
             user_message=user_message, 
             model=config['model'],
             api_key=config['api_key'],
-            use_tools=config['use_tools']
+            is_vertex=config['is_vertex'], # 【核心修改】：将参数传给处理函数
+            use_tools=config['use_tools'],
+            schema=output_schema
         )
         
     elif config['type'] == 'openai':

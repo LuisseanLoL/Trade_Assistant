@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import random
+import glob
 import pandas as pd
 import questionary
 from questionary import Choice
@@ -42,6 +43,17 @@ def get_logical_date():
     if now.hour < 9:
         return (now - timedelta(days=1)).date()
     return now.date()
+
+def get_agent_options():
+    """动态获取 agents_text 目录下的所有 Agent 角色"""
+    agent_files = glob.glob("agents_text/*.txt")
+    options = []
+    for f in agent_files:
+        name = os.path.basename(f).replace(".txt", "")
+        # 将下划线替换为空格用于展示，value 保持原名
+        options.append(Choice(name.replace("_", " "), value=name))
+    # 按名称拼音/字母排序
+    return sorted(options, key=lambda x: x.title)
 
 def main():
     # ==========================================
@@ -108,7 +120,7 @@ def main():
     model_choices = [Choice(cfg['name'], value=mid) for mid, cfg in model_configs.items()]
 
     flash_model = questionary.select(
-        "【步骤 2】请选择【第一阶段：初筛模型】(用于快速扫盘过滤)：",
+        "【步骤 2】请选择【第一阶段：初筛模型】(用于快速扫盘过滤，兼任大师扮演者)：",
         choices=model_choices,
         pointer="👉"
     ).ask()
@@ -124,28 +136,34 @@ def main():
     pro_model = flash_model
     dual_filter = use_pro # 漏斗架构下，双筛绑定为True
     use_moa = False
-    committee_models = []
+    committee_agents = []
 
     if use_pro:
         use_moa = questionary.confirm(
-            "【步骤 3.1】终审机制：是否升级为【MoA 多模型联合议事】？\n(选No则使用单发大模型复盘)", 
+            "【步骤 3.1】终审机制：是否升级为【MoA 多大师联合议事】？\n(选No则使用单发大模型复盘)", 
             default=True
         ).ask()
         if use_moa is None: return
 
         if use_moa:
-            committee_models = questionary.checkbox(
-                "请选择【MoA：打工研究员】(建议异构，2-4个)：",
-                choices=model_choices
-            ).ask()
-            if committee_models is None: return
-            if not committee_models:
-                print("⚠️ 未选择任何参会模型，已自动退化为单模型模式。")
+            agent_choices = get_agent_options()
+            if not agent_choices:
+                print("⚠️ 未在 agents_text/ 目录下检测到大师人设文件，已自动退化为单模型复盘模式。")
                 use_moa = False
+            else:
+                committee_agents = questionary.checkbox(
+                    "请选择【MoA：参会大师 (Agent 角色)】(由初筛模型扮演，建议2-4个)：",
+                    choices=agent_choices
+                ).ask()
+                
+                if committee_agents is None: return
+                if not committee_agents:
+                    print("⚠️ 未选择任何参会大师，已自动退化为单模型复盘模式。")
+                    use_moa = False
             
             if use_moa:
                 pro_model = questionary.select(
-                    "请选择【MoA：最终拍板裁判】(建议用推理最强模型，如 Gemini-Pro)：",
+                    "请选择【MoA：最终拍板裁判】(投资总监，建议用推理最强模型)：",
                     choices=model_choices,
                     pointer="👉"
                 ).ask()
@@ -204,10 +222,10 @@ def main():
 
     print(f"\n=== 🚀 开始量化批量分析任务 ===")
     print(f"逻辑归属日期: {current_date}")
-    print(f"初筛模型: {flash_model}")
+    print(f"初筛模型(Actor): {flash_model}")
     if use_pro:
         if use_moa:
-            print(f"终审架构: 【漏斗触发 + MoA议事】 | 参会研究员: {committee_models} | 最终裁判: {pro_model}")
+            print(f"终审架构: 【漏斗触发 + MoA多大师议事】 | 参会大师: {committee_agents} | 最终裁判(Judge): {pro_model}")
         else:
             print(f"终审架构: 【漏斗触发 + 单发复盘】 | 决策模型: {pro_model}")
     else:
@@ -229,7 +247,7 @@ def main():
         print(f">>> 开始处理股票: {code} | 当前持仓: {current_position} 股 | 成本: {current_cost} 元")
         
         try:
-            # 这里的参数签名已包含 use_moa 和 committee_models 透传给 worker.process
+            # 透传 committee_agents 替代原先的 committee_models
             processed_result = process(
                 stock_code=code,
                 stock_position=current_position,
@@ -242,7 +260,7 @@ def main():
                 pro_model=pro_model,
                 dual_filter=dual_filter,
                 use_moa=use_moa,               
-                committee_models=committee_models 
+                committee_agents=committee_agents 
             )
 
             if processed_result is SHOULD_SKIP:

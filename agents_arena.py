@@ -185,17 +185,17 @@ if __name__ == "__main__":
     
     if test_personas:
         # 2. 配置输入文件和参赛模型
-        user_input_file = r"input\2026-03-09\601717_中创智领_input_2026-03-09.txt" 
+        user_input_file = r"input\2026-03-10\002624_完美世界_input_2026-03-10.txt" 
         
         models_to_test = [
-        "gemini_flash",
+        # "gemini_flash",
         "gemini_pro",
-        "qwen_9b",
-        "qwen_35b",
-        "kimi_k25",
-        "deepseek_v32",
-        "glm_5",
-        "minimax_m25"
+        # "qwen_9b",
+        # "qwen_35b",
+        # "kimi_k25",
+        # "deepseek_v32",
+        # "glm_5",
+        # "minimax_m25"
     ] # 可以根据你的 .env 随意增减
         
         # 3. 启动竞技场

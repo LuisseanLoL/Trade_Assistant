@@ -68,8 +68,8 @@ def get_news_titles(symbol="600000", stock_name='浦发银行', max_news=20, sav
     获取并处理新闻标题 (包含内容与标题双搜索并集，并增加随机休眠防反爬)
     """
     urls = [
-        f"https://so.eastmoney.com/news/s?keyword={symbol}&type=title&sort=time",
-        f"https://so.eastmoney.com/news/s?keyword={symbol}&type=content&sort=time",
+        f"https://so.eastmoney.com/news/s?keyword={stock_name}&type=title&sort=time",
+        f"https://so.eastmoney.com/news/s?keyword={stock_name}&type=content&sort=time",
     ]
     
     all_news_data = []

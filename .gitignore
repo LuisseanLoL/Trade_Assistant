@@ -19,6 +19,7 @@ output/
 output_etf/
 test/
 arena_results/
+key/
 
 portfolio.csv
 test.ipynb
