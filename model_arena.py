@@ -126,7 +126,7 @@ def run_model_arena(system_file, input_file, test_models=None, output_dir="arena
 if __name__ == "__main__":
     # --- 配置区域 ---
     sys_prompt_file = "LLM system content.txt"
-    user_input_file = r"input\2026-03-08\002170_芭田股份_input_2026-03-08.txt" 
+    user_input_file = r"input\2026-03-11\001914_招商积余_input_2026-03-11.txt" 
     
     models_to_test = [
         "gemini_flash",

@@ -128,7 +128,13 @@ def parse_and_build_fin_and_quant_ui(input_text):
     except: pass
     
     if "相关新闻如下：" in input_text:
-        try: news_text = input_text.split("相关新闻如下：")[1].split("当前该股持仓：")[0].strip()
+        try: 
+            news_part = input_text.split("相关新闻如下：")[1]
+            # 兼容新版的“仓位”和历史记录的“持仓”
+            if "当前该股仓位：" in news_part:
+                news_text = news_part.split("当前该股仓位：")[0].strip()
+            else:
+                news_text = news_part.split("当前该股持仓：")[0].strip()
         except: pass
 
     def format_market_cap(val_str):

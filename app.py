@@ -66,6 +66,19 @@ def get_agent_options():
 
 AGENT_OPTIONS = get_agent_options()
 
+# 针对 A 股市场特色精选的 7 位默认参会大师
+default_agent_names = [
+    "A_Share_Hot_Money",
+    "Richard_Wyckoff",
+    "Jesse_Livermore",
+    "Cathie_Wood",
+    "Peter_Lynch",
+    "Stanley_Druckenmiller",
+    "Warren_Buffett"
+]
+# 从已有的选项池中过滤出这 7 位，防止因为缺少本地文件导致前端报错
+default_agents = [opt['value'] for opt in AGENT_OPTIONS if opt['value'] in default_agent_names]
+
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.LUMEN, dbc.icons.FONT_AWESOME], prevent_initial_callbacks="initial_duplicate")
 app.title = "AI Trade Assistant"
 
@@ -78,8 +91,11 @@ sidebar = html.Div([
         html.Label("股票代码", className="small fw-bold text-secondary mb-1"),
         dbc.InputGroup([dbc.Input(id="input-stock-code", type="text", placeholder="输入代码...", size="sm"), dbc.Button(html.I(className="fa-solid fa-dice"), id="btn-random", color="light", title="随机抽取", size="sm")], className="mb-2"),
         
-        html.Label("当前持仓", className="small fw-bold text-secondary mb-1 mt-1"),
-        dbc.Input(id="input-position", type="number", value=0, className="mb-2", size="sm"),
+        html.Label("当前仓位", className="small fw-bold text-secondary mb-1 mt-1"),
+        dbc.InputGroup([
+            dbc.Input(id="input-position", type="number", value=0, min=0, max=100, step=1, size="sm"),
+            dbc.InputGroupText("%", style={"fontSize": "0.8rem", "padding": "0.25rem 0.5rem", "backgroundColor": "#f8f9fa"})
+        ], className="mb-2"),
         html.Label("持仓成本", className="small fw-bold text-secondary mb-1"),
         dbc.Input(id="input-cost", type="number", value=0, className="mb-3", size="sm"),
 
@@ -93,14 +109,17 @@ sidebar = html.Div([
         html.Label("选择 Pro / 裁判模型 (Judge)", className="small fw-bold text-secondary mb-1"),
         dbc.Select(id="dropdown-pro-model", options=MODEL_OPTIONS, value=default_pro_model, className="mb-2", size="sm"),
 
-        dbc.Checklist(options=[{"label": "3. 启用双重筛选过滤", "value": 1}], value=[1], id="switch-dual-filter", switch=True, className="mb-2 text-secondary small fw-bold"),
+        # 默认关闭双重筛选，为 MoA 让路
+        dbc.Checklist(options=[{"label": "3. 启用双重筛选过滤", "value": 1}], value=[], id="switch-dual-filter", switch=True, className="mb-2 text-secondary small fw-bold"),
 
         # --- 【修改】多模型议事配置 -> 多 Agent 议事配置 ---
         html.Hr(style={"margin": "10px 0", "opacity": "0.15"}),
         html.H6("多大师议事会 (MoA)", className="text-muted fw-bold mb-2", style={"fontSize": "0.8rem", "letterSpacing": "1px", "color": "#e64980"}),
-        dbc.Checklist(options=[{"label": "启用 AI 裁判委员会", "value": 1}], value=[], id="switch-use-moa", switch=True, className="mb-1 text-secondary small fw-bold"),
+        # 默认开启 AI 裁判委员会
+        dbc.Checklist(options=[{"label": "启用 AI 裁判委员会", "value": 1}], value=[1], id="switch-use-moa", switch=True, className="mb-1 text-secondary small fw-bold"),
         html.Label("选择参会大师 (Agent 角色)", className="small fw-bold text-secondary mb-1"),
-        dcc.Dropdown(id="dropdown-committee-agents", options=AGENT_OPTIONS, multi=True, placeholder="选择大师角色...", className="mb-3", style={"fontSize": "0.8rem"}),
+        # 默认填入刚才选好的 default_agents
+        dcc.Dropdown(id="dropdown-committee-agents", options=AGENT_OPTIONS, value=default_agents, multi=True, placeholder="选择大师角色...", className="mb-3", style={"fontSize": "0.8rem"}),
 
         dbc.Button("开始分析", id="btn-analyze", color="primary", className="w-100 fw-bold", size="sm", style={"borderRadius": "4px", "backgroundColor": "#4c6ef5", "border": "none"}),
         html.Div(id="random-msg", className="mt-2 small text-danger")
@@ -204,6 +223,33 @@ def handle_random_pick(n_clicks):
     if not n_clicks: return dash.no_update, ""
     code, err = get_random_unprocessed_stock()
     return (dash.no_update, err) if err else (code, "已随机填入代码！")
+
+@app.callback(
+    [Output("switch-use-moa", "value"), Output("switch-dual-filter", "value")],
+    [Input("switch-use-moa", "value"), Input("switch-dual-filter", "value")],
+    prevent_initial_call=True
+)
+def sync_exclusive_switches(moa_val, dual_val):
+    """确保 'MoA 大师议事' 和 '双重筛选' 逻辑互斥"""
+    ctx = dash.callback_context
+    if not ctx.triggered: 
+        return dash.no_update, dash.no_update
+        
+    trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    
+    if trigger_id == "switch-use-moa":
+        if moa_val:  # 如果开启了 MoA
+            return [1], []  # 强制关闭双重筛选
+        else:
+            return [], dual_val # 保持现状
+            
+    elif trigger_id == "switch-dual-filter":
+        if dual_val:  # 如果开启了双重筛选
+            return [], [1]  # 强制关闭 MoA
+        else:
+            return moa_val, [] # 保持现状
+            
+    return dash.no_update, dash.no_update
 
 @app.callback(Output("daily-table", "data"), [Input("date-tabs", "active_tab")])
 def update_table(active_tab): return load_daily_table_by_date(active_tab) if active_tab else []
@@ -360,7 +406,7 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
 相关新闻如下：
 {news_titles}
 
-当前该股持仓：{position} 股
+当前该股仓位：{position}%
 当前持仓成本: {cost} 元
 
 请记住，行动必须是买入、卖出、持有或观望。
@@ -489,4 +535,4 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     return fig, f"{s_name} ({stock_code})", format_dynamic_color(parsed["action"], True), format_dynamic_color(parsed["expectation"], False), parsed["pos_adv"], parsed["confidence"], buy_display, sell_display, stop_display, disp_model, parsed["reasoning"], news_t, macro_ui, fin_ui, quant_ui, [dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()[:5]], c_str, load_daily_table_by_date(c_str)
 
 if __name__ == '__main__':
-    app.run(debug=True, port=8050)
+    app.run(host='0.0.0.0',debug=True, port=8050)
