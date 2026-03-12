@@ -6,11 +6,8 @@ import plotly.graph_objects as go
 import pandas as pd
 from datetime import datetime, timedelta
 import os
-import re
-import json_repair
 import glob
 import logging
-import concurrent.futures
 from dotenv import load_dotenv
 
 # 屏蔽底层 HTTP 库的 INFO 级别请求日志，避免大模型 API 刷屏
@@ -21,12 +18,12 @@ logging.getLogger("requests").setLevel(logging.WARNING)
 # 加载环境变量
 load_dotenv()
 
-# 导入 src 模块
-from src.data_crawler import get_stock_data, get_stock_name_bs, get_chart_data, get_ths_fund_flow
-from src.LLM_chat import get_LLM_message, get_model_config
+# ================= 导入内部模块 =================
+# 注意：大部分数据爬取逻辑已下放到 core_analyzer 中，app.py 仅保留历史记录查看所需的基础绘图库
+from src.data_crawler import get_chart_data  
+from src.LLM_chat import get_model_config
 from src.utils import (
     get_logical_date, 
-    fetch_news_safely, 
     get_all_output_dates, 
     load_daily_table_by_date, 
     get_random_unprocessed_stock, 
@@ -34,6 +31,8 @@ from src.utils import (
     create_advanced_kline_fig,
 )
 from src.ui_components import parse_and_build_macro_ui, parse_and_build_fin_and_quant_ui
+# 🌟 引入全新重构的分析引擎
+from src.core_analyzer import run_core_analysis
 
 # ==========================================
 # 界面构建
@@ -54,13 +53,12 @@ else:
     default_flash_model = MODEL_OPTIONS[0]['value'] if len(MODEL_OPTIONS) > 0 else None
     default_pro_model = MODEL_OPTIONS[1]['value'] if len(MODEL_OPTIONS) > 1 else default_flash_model
 
-# 【新增】：动态获取 Agents 列表
+# 动态获取 Agents 列表
 def get_agent_options():
     agent_files = glob.glob("agents_text/*.txt")
     options = []
     for f in agent_files:
         name = os.path.basename(f).replace(".txt", "")
-        # 将下划线替换为空格，用于前端展示
         options.append({'label': name.replace("_", " "), 'value': name})
     return sorted(options, key=lambda x: x['label'])
 
@@ -68,15 +66,9 @@ AGENT_OPTIONS = get_agent_options()
 
 # 针对 A 股市场特色精选的 7 位默认参会大师
 default_agent_names = [
-    "A_Share_Hot_Money",
-    "Richard_Wyckoff",
-    "Jesse_Livermore",
-    "Cathie_Wood",
-    "Peter_Lynch",
-    "Stanley_Druckenmiller",
-    "Warren_Buffett"
+    "A_Share_Hot_Money", "Richard_Wyckoff", "Jesse_Livermore", 
+    "Cathie_Wood", "Peter_Lynch", "Stanley_Druckenmiller", "Warren_Buffett"
 ]
-# 从已有的选项池中过滤出这 7 位，防止因为缺少本地文件导致前端报错
 default_agents = [opt['value'] for opt in AGENT_OPTIONS if opt['value'] in default_agent_names]
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.LUMEN, dbc.icons.FONT_AWESOME], prevent_initial_callbacks="initial_duplicate")
@@ -101,7 +93,6 @@ sidebar = html.Div([
 
         # --- 模型架构解耦配置 ---
         html.H6("流水线模型配置", className="text-muted fw-bold mb-2", style={"fontSize": "0.8rem", "letterSpacing": "1px"}),
-        
         html.Label("1. 基础/初筛模型 (Actor)", className="small fw-bold text-secondary mb-1"),
         dbc.Select(id="dropdown-flash-model", options=MODEL_OPTIONS, value=default_flash_model, className="mb-2", size="sm"),
         
@@ -109,16 +100,13 @@ sidebar = html.Div([
         html.Label("选择 Pro / 裁判模型 (Judge)", className="small fw-bold text-secondary mb-1"),
         dbc.Select(id="dropdown-pro-model", options=MODEL_OPTIONS, value=default_pro_model, className="mb-2", size="sm"),
 
-        # 默认关闭双重筛选，为 MoA 让路
         dbc.Checklist(options=[{"label": "3. 启用双重筛选过滤", "value": 1}], value=[], id="switch-dual-filter", switch=True, className="mb-2 text-secondary small fw-bold"),
 
-        # --- 【修改】多模型议事配置 -> 多 Agent 议事配置 ---
+        # --- 多 Agent 议事配置 ---
         html.Hr(style={"margin": "10px 0", "opacity": "0.15"}),
         html.H6("多大师议事会 (MoA)", className="text-muted fw-bold mb-2", style={"fontSize": "0.8rem", "letterSpacing": "1px", "color": "#e64980"}),
-        # 默认开启 AI 裁判委员会
         dbc.Checklist(options=[{"label": "启用 AI 裁判委员会", "value": 1}], value=[1], id="switch-use-moa", switch=True, className="mb-1 text-secondary small fw-bold"),
         html.Label("选择参会大师 (Agent 角色)", className="small fw-bold text-secondary mb-1"),
-        # 默认填入刚才选好的 default_agents
         dcc.Dropdown(id="dropdown-committee-agents", options=AGENT_OPTIONS, value=default_agents, multi=True, placeholder="选择大师角色...", className="mb-3", style={"fontSize": "0.8rem"}),
 
         dbc.Button("开始分析", id="btn-analyze", color="primary", className="w-100 fw-bold", size="sm", style={"borderRadius": "4px", "backgroundColor": "#4c6ef5", "border": "none"}),
@@ -232,23 +220,15 @@ def handle_random_pick(n_clicks):
 def sync_exclusive_switches(moa_val, dual_val):
     """确保 'MoA 大师议事' 和 '双重筛选' 逻辑互斥"""
     ctx = dash.callback_context
-    if not ctx.triggered: 
-        return dash.no_update, dash.no_update
-        
+    if not ctx.triggered: return dash.no_update, dash.no_update
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
     if trigger_id == "switch-use-moa":
-        if moa_val:  # 如果开启了 MoA
-            return [1], []  # 强制关闭双重筛选
-        else:
-            return [], dual_val # 保持现状
-            
+        if moa_val: return [1], []
+        else: return [], dual_val
     elif trigger_id == "switch-dual-filter":
-        if dual_val:  # 如果开启了双重筛选
-            return [], [1]  # 强制关闭 MoA
-        else:
-            return moa_val, [] # 保持现状
-            
+        if dual_val: return [], [1]
+        else: return moa_val, []
     return dash.no_update, dash.no_update
 
 @app.callback(Output("daily-table", "data"), [Input("date-tabs", "active_tab")])
@@ -264,7 +244,7 @@ def update_table(active_tab): return load_daily_table_by_date(active_tab) if act
     [Input("btn-analyze", "n_clicks"), Input("daily-table", "active_cell")],
     [State("input-stock-code", "value"), 
      State("dropdown-flash-model", "value"), State("switch-use-pro", "value"), State("dropdown-pro-model", "value"), State("switch-dual-filter", "value"),
-     State("switch-use-moa", "value"), State("dropdown-committee-agents", "value"), # 【修改】
+     State("switch-use-moa", "value"), State("dropdown-committee-agents", "value"), 
      State("input-position", "value"), State("input-cost", "value"), State("daily-table", "derived_viewport_data"), State("date-tabs", "active_tab")],
     prevent_initial_call=True
 )
@@ -278,7 +258,7 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     use_moa = bool(moa_switch)
     committee_agents = committee_agents if committee_agents else []
 
-    # 解析模型展示名称（兼容 MoA 标签）
+    # UI 辅助函数
     def get_display_model_name(tag):
         if not tag: return "-"
         if tag.startswith("MoA-"):
@@ -307,22 +287,15 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
         return text_str
     
     def get_price_display(target_p, buy_p):
-        """计算目标价/止损价相对于买入价的百分比，并格式化输出"""
         if not target_p or str(target_p) == "-": return "-"
         if not buy_p or str(buy_p) == "-": return str(target_p)
-        
         try:
             t_val, b_val = float(target_p), float(buy_p)
             if b_val > 0:
                 pct = (t_val - b_val) / b_val * 100
                 sign = "+" if pct > 0 else ""
-                # 主数字保持原样，百分比缩小字号并降低透明度，更具高级感
-                return html.Span([
-                    str(t_val),
-                    html.Span(f" ({sign}{pct:.2f}%)", style={"fontSize": "0.75rem", "opacity": "0.85", "marginLeft": "2px"})
-                ])
-        except Exception:
-            pass
+                return html.Span([str(t_val), html.Span(f" ({sign}{pct:.2f}%)", style={"fontSize": "0.75rem", "opacity": "0.85", "marginLeft": "2px"})])
+        except Exception: pass
         return str(target_p)
     
     # ================= 分支 1：点击历史记录表查看详情 =================
@@ -347,204 +320,83 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
         parsed = parse_llm_json(h_out)
         
         beg, end = (datetime.strptime(h_date, "%Y-%m-%d") - timedelta(days=180)).strftime("%Y%m%d"), h_date.replace('-', '')
-        df_chart = get_chart_data(h_stock, beg, end)
         
+        # 历史记录回看需要调用爬虫复现图表
+        df_chart = get_chart_data(h_stock, beg, end)
         fig = create_advanced_kline_fig(df_chart)
+        
         if not df_chart.empty:
-            buy_p, sell_p, stop_p = parsed["buy_p"], parsed["sell_p"], parsed["stop_p"]
+            buy_p, sell_p, stop_p = parsed.get("buy_p"), parsed.get("sell_p"), parsed.get("stop_p")
             if buy_p and str(buy_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(buy_p), line_dash="dot", line_color="#be4bdb", annotation_text="买点", row=1, col=1)
             if sell_p and str(sell_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(sell_p), line_dash="dot", line_color="#f03e3e", annotation_text="目标", row=1, col=1)
             if stop_p and str(stop_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(stop_p), line_dash="dot", line_color="#37b24d", annotation_text="止损", row=1, col=1)
         
         buy_p, sell_p, stop_p = parsed.get("buy_p"), parsed.get("sell_p"), parsed.get("stop_p")
-        
-        # 使用辅助函数生成带百分比的显示组件
         sell_display = get_price_display(sell_p, buy_p)
         stop_display = get_price_display(stop_p, buy_p)
         buy_display = str(buy_p) if buy_p else "-"
         
-        return fig, f"{h_stock_name} ({h_stock})", format_dynamic_color(parsed["action"], True), format_dynamic_color(parsed["expectation"], False), parsed["pos_adv"], parsed["confidence"], buy_display, sell_display, stop_display, disp_model, parsed["reasoning"], news_t, macro_ui, fin_ui, quant_ui, dash.no_update, dash.no_update, dash.no_update
+        return fig, f"{h_stock_name} ({h_stock})", format_dynamic_color(parsed.get("action"), True), format_dynamic_color(parsed.get("expectation"), False), parsed.get("pos_adv"), parsed.get("confidence"), buy_display, sell_display, stop_display, disp_model, parsed.get("reasoning"), news_t, macro_ui, fin_ui, quant_ui, dash.no_update, dash.no_update, dash.no_update
 
-    # ================= 分支 2：点击“开始分析”获取新决策 =================
+    # ================= 分支 2：点击“开始分析”触发核心引擎 =================
     if not stock_code: return [dash.no_update] * 18
     c_date = get_logical_date()
-    c_str, end, beg = c_date.strftime("%Y-%m-%d"), c_date.isoformat().replace('-', ''), (c_date - timedelta(days=720)).isoformat().replace('-', '')
+    c_str = c_date.strftime("%Y-%m-%d")
     stock_code = stock_code.strip()
-    s_name = get_stock_name_bs(stock_code)
-    safe_s_name = re.sub(r'[\\/:*?"<>|]', '', s_name) 
-    
-    df_chart = get_chart_data(stock_code, beg, end)
 
-    # 🌟 核心新增：获取资金流数据并拼接到 K线 DataFrame 中
-    try:
-        fund_df = get_ths_fund_flow(stock_code)
-        if not fund_df.empty:
-            # 按日期左连接，保证主时间轴不断裂
-            df_chart = pd.merge(df_chart, fund_df, on='date', how='left')
-    except Exception as e:
-        print(f"合并资金数据到日常图表失败: {e}")
-    # =========================================================
+    # 🌟 直接调用 core_analyzer.py 中统一的核心方法
+    df_chart, s_name, s_price, parsed, disp_model, user_msg, res_text = run_core_analysis(
+        stock_code=stock_code,
+        position=position,
+        cost=cost,
+        current_date_str=c_str,
+        flash_model=flash_model,
+        use_pro=use_pro,
+        pro_model=pro_model,
+        dual_filter=dual_filter,
+        use_moa=use_moa,
+        committee_agents=committee_agents,
+        committee_model=flash_model  # 在 UI 中默认复用初筛模型作为议事模型
+    )
 
-    s_price = df_chart['close'].iloc[-1] if not df_chart.empty else 0
+    # UI 绘图与解析
     fig = create_advanced_kline_fig(df_chart)
-
-    in_str = get_stock_data(stock_code=stock_code, beg=beg, end=end, current_date=c_str)
-    news_titles = fetch_news_safely(stock_code, safe_s_name, c_str)
+    buy_p, sell_p, stop_p = parsed.get("buy_p") or parsed.get("建议买入价"), parsed.get("sell_p") or parsed.get("目标卖出价"), parsed.get("stop_p") or parsed.get("建议止损价")
     
     if not df_chart.empty:
-        df_monthly_tmp = df_chart.copy()
-        df_monthly_tmp['date'] = pd.to_datetime(df_monthly_tmp['date'])
-        df_monthly_tmp['year_month'] = df_monthly_tmp['date'].dt.to_period('M')
-        df_monthly = df_monthly_tmp.groupby('year_month').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'}).reset_index()
-        df_monthly.rename(columns={'year_month': 'date'}, inplace=True)
-        df_monthly['date'] = df_monthly['date'].astype(str)
-        # 【修改点1】：使用 to_markdown 替代 to_string
-        monthly_str = df_monthly.tail(20).to_markdown(index=False)
-    else:
-        monthly_str = "暂无"
+        if buy_p and str(buy_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(buy_p), line_dash="dot", line_color="#be4bdb", annotation_text="买点", row=1, col=1)
+        if sell_p and str(sell_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(sell_p), line_dash="dot", line_color="#f03e3e", annotation_text="目标", row=1, col=1)
+        if stop_p and str(stop_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(stop_p), line_dash="dot", line_color="#37b24d", annotation_text="止损", row=1, col=1)
 
-    # 【修改点2】：使用 to_markdown 替代 to_string
-    daily_str = df_chart.tail(20).to_markdown(index=False) if not df_chart.empty else "暂无"
-
-    user_msg = f"""基于获得的以下数据和新闻消息，做出你的交易决策。
-
-{in_str}
-
-最近二十个交易日数据如下：
-{daily_str}
-
-最近二十个月K线数据如下：
-{monthly_str}
-
-相关新闻如下：
-{news_titles}
-
-当前该股仓位：{position}%
-当前持仓成本: {cost} 元
-
-请记住，行动必须是买入、卖出、持有或观望。
-请严格结合你的专属交易哲学，从上述客观数据中提取核心矛盾，并给出带有明确止损止盈点位的决策。"""
-
-    os.makedirs(f"input/{c_str}", exist_ok=True)
-    with open(f"input/{c_str}/{stock_code}_{safe_s_name}_input_{c_str}.txt", 'w', encoding='utf-8') as f: f.write(user_msg)
-
-    try:
-        with open('LLM system content.txt', 'r', encoding='utf-8') as f: sys_content = f.read()
-    except: sys_content = "你是一个专业的量化交易AI..."
-        
-    run_pro = False
-    res_text = ""
-    
-    # 【一、 过滤/初筛阶段】
-    if use_pro and dual_filter:
-        if float(position) > 0: 
-            run_pro = True
-        else:
-            res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=flash_model)
-            try:
-                c_text = res_text.replace("“", '"').replace("”", '"')
-                s_idx, e_idx = c_text.find('{'), c_text.rfind('}')
-                if s_idx != -1 and e_idx != -1:
-                    action_result = json_repair.loads(c_text[s_idx : e_idx + 1]).get('操作', '')
-                    if action_result in ['买入', '卖出', '持有']: run_pro = True
-            except: 
-                run_pro = True 
-    elif use_pro and not dual_filter:
-        run_pro = True
-    else:
-        res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=flash_model)
-
-    # 【二、 高级决议阶段：多 Agent 大师角色扮演 vs 单模型】
-    if run_pro: 
-        if use_moa and len(committee_agents) > 0:
-            print(f"🚀 触发大师理事会，基座模型 [{flash_model}] 正在扮演以下大师并发分析: {committee_agents}...")
-            committee_results = {}
-            
-            # 【关键】：从基础系统提示词中提取“强制输出格式”，确保大师也能乖乖输出 JSON
-            format_idx = sys_content.find("【决策过程与输出规范】")
-            format_rules = sys_content[format_idx:] if format_idx != -1 else sys_content
-            
-            def agent_task(agent_name):
-                try:
-                    with open(f"agents_text/{agent_name}.txt", "r", encoding="utf-8") as f:
-                        agent_persona = f.read()
-                    # 融合大师人设与强制输出规范
-                    agent_sys_content = f"{agent_persona}\n\n====================\n以下是系统级硬性约束，你必须严格遵守：\n{format_rules}"
-                    # 使用设定的基础/初筛模型（Actor）来扮演大师
-                    return get_LLM_message(system_content=agent_sys_content, user_message=user_msg, model_id=flash_model)
-                except Exception as e:
-                    return f"该大师 ({agent_name}) 分析失败：{e}"
-
-            # 并发请求基础模型获取大师们的独立意见
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(committee_agents)) as executor:
-                futures = {executor.submit(agent_task, agent_name): agent_name for agent_name in committee_agents}
-                for future in concurrent.futures.as_completed(futures):
-                    agent_name = futures[future]
-                    try:
-                        committee_results[agent_name] = future.result()
-                    except Exception as e:
-                        print(f"⚠️ {agent_name} 议事失败: {e}")
-                        committee_results[agent_name] = f"该大师分析失败：{e}"
-            
-            # 组装 Meta-Prompt (裁判提示词)
-            judge_msg = f"{user_msg}\n\n"
-            judge_msg += "=================================\n"
-            judge_msg += "【投资总监（AI裁判）专属决议指令】\n"
-            judge_msg += "以上是客观标的数据。以下是多位顶尖投资大师（不同交易流派的 Agent）针对该数据给出的独立分析和 JSON 报告：\n\n"
-            
-            for agent_name, res in committee_results.items():
-                display_name = agent_name.replace("_", " ")
-                judge_msg += f"--- 投资大师：{display_name} 的意见 ---\n{res}\n\n"
-                
-            judge_msg += "作为量化基金的投资总监，你拥有最终拍板权。请严格按照以下【核心裁判原则】进行综合决策：\n"
-            judge_msg += "1. 事实核查先行（零容忍数据幻觉）：必须先核对大师引用的数据是否与上文提供的【客观标的数据】完全一致。对于任何基于虚构数据得出的结论，必须直接一票否决。\n"
-            judge_msg += "2. 寻找非共识的正确与流派交叉验证：重点审视大师之间的【分歧点】。例如，当价值派（如巴菲特）与趋势派（如利弗莫尔）在特定点位达成共识时，该决策置信度极高；若出现严重分歧，需判断当前市场环境更适用哪种流派。\n"
-            judge_msg += "3. 拒绝无效瘫痪（果断决策）：不要因为存在分歧就本能地退缩到‘观望’。在剔除幻觉意见后，评估盈亏比，勇敢给出具体的买入/卖出、观望指令和点位。\n\n"
-            judge_msg += "请给出最终决策。你必须在 JSON 的 '原因' 字段中分段输出：\n"
-            judge_msg += "【事实核查与幻觉剔除】：简述是否有大师引用了错误数据。\n"
-            judge_msg += "【大师观点交锋】：简述各流派有效观点的交锋与共鸣点。\n"
-            judge_msg += "【总监拍板逻辑】：详细说明你最终的综合裁决理由。\n"
-            judge_msg += "注意：你的输出必须是一个单一的、严格符合原定系统提示词规范的 JSON 对象！\n"
-
-            # 呼叫裁判模型进行最终裁决
-            print(f"⚖️ 正在请求裁判模型 [{pro_model}] 进行最终综合拍板...")
-            res_text = get_LLM_message(system_content=sys_content, user_message=judge_msg, model_id=pro_model)
-            model_tag = f"MoA-{len(committee_agents)}大师-{pro_model}"
-            
-        else:
-            # 原有的单发 Pro 模型逻辑
-            res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=pro_model)
-            model_tag = f"D-{flash_model}-{pro_model}" if dual_filter else pro_model
-            
-    disp_model = get_display_model_name(model_tag)
-    
-    os.makedirs(f"output/{c_str}", exist_ok=True)
-    with open(f"output/{c_str}/{stock_code}_{safe_s_name}_output_{model_tag}_{c_str}.txt", 'w', encoding='utf-8') as f: f.write(res_text)
-
-    parsed = parse_llm_json(res_text)
+    # 渲染子 UI 组件
     macro_ui = parse_and_build_macro_ui(user_msg)
     fin_ui, quant_ui, news_t = parse_and_build_fin_and_quant_ui(user_msg)
 
-    buy_p, sell_p, stop_p = parsed["buy_p"], parsed["sell_p"], parsed["stop_p"]
-    if buy_p and str(buy_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(buy_p), line_dash="dot", line_color="#be4bdb", annotation_text="买点", row=1, col=1)
-    if sell_p and str(sell_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(sell_p), line_dash="dot", line_color="#f03e3e", annotation_text="目标", row=1, col=1)
-    if stop_p and str(stop_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(stop_p), line_dash="dot", line_color="#37b24d", annotation_text="止损", row=1, col=1)
-
-    rr_str = 'N/A'
-    try:
-        if buy_p and sell_p and stop_p and float(buy_p) - float(stop_p) > 0: rr_str = f"{(float(sell_p) - float(buy_p)) / (float(buy_p) - float(stop_p)):.2f}:1"
-    except: pass
-
-    pd.DataFrame([{
-        "股票代码": stock_code, "股票名称": s_name, "决策模型": disp_model, "当前价格": s_price, "预期": parsed["expectation"], "操作": parsed["action"], "建议仓位": parsed["pos_adv"], "置信度": parsed["confidence"], "建议买入价": str(buy_p) if buy_p else "-", "目标卖出价": str(sell_p) if sell_p else "-", "建议止损价": str(stop_p) if stop_p else "-", "回报风险比": rr_str
-    }]).to_csv(f"output/{c_str}/Daily Table_{c_str}.csv", index=False, header=not os.path.exists(f"output/{c_str}/Daily Table_{c_str}.csv"), mode='a', encoding='utf-8-sig')
-
-    # 在最终 return 之前，使用辅助函数生成带百分比的显示组件
+    # 动态数值展示
     sell_display = get_price_display(sell_p, buy_p)
     stop_display = get_price_display(stop_p, buy_p)
     buy_display = str(buy_p) if buy_p else "-"
 
-    return fig, f"{s_name} ({stock_code})", format_dynamic_color(parsed["action"], True), format_dynamic_color(parsed["expectation"], False), parsed["pos_adv"], parsed["confidence"], buy_display, sell_display, stop_display, disp_model, parsed["reasoning"], news_t, macro_ui, fin_ui, quant_ui, [dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()[:5]], c_str, load_daily_table_by_date(c_str)
+    return (
+        fig, 
+        f"{s_name} ({stock_code})", 
+        format_dynamic_color(parsed.get("action") or parsed.get("操作"), True), 
+        format_dynamic_color(parsed.get("expectation") or parsed.get("预期"), False), 
+        parsed.get("pos_adv") or parsed.get("建议仓位"), 
+        parsed.get("confidence") or parsed.get("置信度"), 
+        buy_display, 
+        sell_display, 
+        stop_display, 
+        disp_model, 
+        parsed.get("reasoning") or parsed.get("原因"), 
+        news_t, 
+        macro_ui, 
+        fin_ui, 
+        quant_ui, 
+        [dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()[:5]], 
+        c_str, 
+        load_daily_table_by_date(c_str)
+    )
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0',debug=True, port=8050)
+    app.run(host='0.0.0.0', debug=True, port=8050)

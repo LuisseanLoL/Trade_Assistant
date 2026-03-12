@@ -8,8 +8,8 @@ from questionary import Choice
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 
-# 引入核心工作流和最新架构需要的工具
-from src.worker import process, SHOULD_SKIP
+# 🌟 直接引入核心引擎，彻底抛弃 worker.py
+from src.core_analyzer import run_core_analysis
 from src.LLM_chat import get_model_config
 
 # 在所有逻辑开始前，强制加载根目录的 .env 文件
@@ -50,9 +50,7 @@ def get_agent_options():
     options = []
     for f in agent_files:
         name = os.path.basename(f).replace(".txt", "")
-        # 将下划线替换为空格用于展示，value 保持原名
         options.append(Choice(name.replace("_", " "), value=name))
-    # 按名称拼音/字母排序
     return sorted(options, key=lambda x: x.title)
 
 def main():
@@ -60,10 +58,7 @@ def main():
     # 1. 日期计算区 (使用逻辑交易日)
     # ==========================================
     current_date = get_logical_date()
-    end_date = current_date 
-    end = end_date.isoformat().replace('-', '')
-    start_date = end_date - timedelta(days=365)  
-    beg = start_date.isoformat().replace('-', '')
+    current_date_str = current_date.strftime("%Y-%m-%d")
 
     # ==========================================
     # 2. 交互式配置参数区 
@@ -72,7 +67,6 @@ def main():
     print("🤖 AI Quant Agent - 批量分析启动终端")
     print("="*50 + "\n")
 
-    # --- 2.1 选择运行模式 ---
     is_random_mode = questionary.select(
         "【步骤 1】请选择批量选股模式：",
         choices=[
@@ -93,11 +87,7 @@ def main():
     SPECIFIC_BATCH = [] 
 
     if USE_RANDOM_BATCH:
-        size_input = questionary.text(
-            "请输入需要随机抽取的股票数量:", 
-            default="5"
-        ).ask()
-        
+        size_input = questionary.text("请输入需要随机抽取的股票数量:", default="5").ask()
         if size_input is None: return
         if size_input.strip().isdigit():
             SAMPLE_SIZE = int(size_input.strip())
@@ -134,8 +124,8 @@ def main():
 
     # 变量初始化
     pro_model = flash_model
-    committee_model = flash_model # 初始化议事模型变量
-    dual_filter = use_pro # 漏斗架构下，双筛绑定为True
+    committee_model = flash_model 
+    dual_filter = use_pro 
     use_moa = False
     committee_agents = []
 
@@ -163,7 +153,6 @@ def main():
                     use_moa = False
             
             if use_moa:
-                # 【新增】单独选择扮演大师的议事会模型
                 committee_model = questionary.select(
                     "请选择【MoA：议事会模型】(并发扮演上述大师角色)：",
                     choices=model_choices,
@@ -197,14 +186,14 @@ def main():
                 df = pd.read_csv(RANDOM_CSV_PATH, dtype=str)
                 all_codes = df[COLUMN_NAME].astype(str).str.strip().tolist()
                 
-                daily_table_path = f"output/{current_date}/Daily Table_{current_date}.csv"
+                daily_table_path = f"output/{current_date_str}/Daily Table_{current_date_str}.csv"
                 processed_codes = set()
                 
                 if os.path.exists(daily_table_path):
                     try:
                         df_daily = pd.read_csv(daily_table_path, dtype={'股票代码': str})
                         processed_codes = set(df_daily['股票代码'].astype(str).str.strip())
-                        print(f"🔍 发现今日({current_date})已处理记录 {len(processed_codes)} 条，将在随机抽取时予以剔除。")
+                        print(f"🔍 发现今日({current_date_str})已处理记录 {len(processed_codes)} 条，将在随机抽取时予以剔除。")
                     except Exception as e:
                         print(f"⚠️ 读取今日 Daily Table 失败: {e}")
                 
@@ -230,7 +219,7 @@ def main():
     portfolio_data = load_portfolio("portfolio.csv")
 
     print(f"\n=== 🚀 开始量化批量分析任务 ===")
-    print(f"逻辑归属日期: {current_date}")
+    print(f"逻辑归属日期: {current_date_str}")
     print(f"初筛模型(Actor): {flash_model}")
     if use_pro:
         if use_moa:
@@ -243,7 +232,7 @@ def main():
     print("===================================\n")
 
     # ==========================================
-    # 4. 循环执行区
+    # 4. 循环执行区 (🌟 抛弃 worker，直连 core_analyzer)
     # ==========================================
     success_count = 0
     skip_count = 0
@@ -256,24 +245,23 @@ def main():
         print(f">>> 开始处理股票: {code} | 当前持仓: {current_position} 股 | 成本: {current_cost} 元")
         
         try:
-            # 透传新增的 committee_model 参数
-            processed_result = process(
+            # 直接调用核心分析引擎
+            df_chart, s_name, s_price, parsed, disp_model, user_msg, res_text = run_core_analysis(
                 stock_code=code,
-                stock_position=current_position,
-                stock_holding_cost=current_cost,
-                beg=beg,
-                end=end,
-                current_date=current_date,
+                position=current_position,
+                cost=current_cost,
+                current_date_str=current_date_str,
                 flash_model=flash_model,
                 use_pro=use_pro,
                 pro_model=pro_model,
                 dual_filter=dual_filter,
                 use_moa=use_moa,
-                committee_model=committee_model, # 【新增】透传给 worker
-                committee_agents=committee_agents 
+                committee_agents=committee_agents,
+                committee_model=committee_model
             )
 
-            if processed_result is SHOULD_SKIP:
+            # 解析结果为空，说明触发了过滤/初筛（没有产生实质性交易价值）
+            if not parsed:
                 print(f"⚠️ 已跳过 {code}（可能由于初筛无交易价值或数据获取失败）。\n")
                 skip_count += 1
             else:
