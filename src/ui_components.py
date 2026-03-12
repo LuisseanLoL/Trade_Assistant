@@ -111,32 +111,52 @@ def parse_and_build_macro_ui(input_text):
 
 def parse_and_build_fin_and_quant_ui(input_text):
     """解析个股财务与量化数据并构建 UI 面板"""
+    
+    # 0. 全局清洗不可见字符（保留，防止外部数据源污染）
+    input_text = input_text.replace('\xa0', ' ').replace('\u200b', '').replace('\u2028', '\n')
+    
     fin_dict = {}
     quant_dict = {}
     news_text = "暂无新闻数据"
     
+    # 1. 解析财务指标
     lines = input_text.split('\n')
     for line in lines:
         if ':' in line or '：' in line:
             k, v = re.split(r'[:：]', line, 1)
             fin_dict[k.strip()] = v.strip()
             
+    # 2. 【终极修复】解析量化矩阵：利用固定标题作为锚点，提取两个标题之间的完整文本块
     try:
-        s_idx, e_idx = input_text.find('量化策略信号矩阵:\n{'), input_text.find('}\n滚动市盈率')
-        if s_idx != -1 and e_idx != -1:
-            quant_dict = json_repair.loads(input_text[s_idx + 9 : e_idx + 1])
-    except: pass
+        start_flag = "【量化策略信号矩阵】"
+        end_flag = "【核心财务指标】"
+        
+        if start_flag in input_text and end_flag in input_text:
+            # 截取两个标题中间的所有内容
+            block = input_text.split(start_flag)[1].split(end_flag)[0]
+            
+            # 找到最外层的正反大括号
+            s_idx = block.find('{')
+            e_idx = block.rfind('}')
+            
+            if s_idx != -1 and e_idx != -1:
+                json_str = block[s_idx : e_idx + 1]
+                quant_dict = json_repair.loads(json_str)
+    except Exception as e: 
+        print(f"量化矩阵解析异常: {e}")
+        pass
     
+    # 3. 解析新闻模块
     if "相关新闻如下：" in input_text:
         try: 
             news_part = input_text.split("相关新闻如下：")[1]
-            # 兼容新版的“仓位”和历史记录的“持仓”
             if "当前该股仓位：" in news_part:
                 news_text = news_part.split("当前该股仓位：")[0].strip()
             else:
                 news_text = news_part.split("当前该股持仓：")[0].strip()
         except: pass
 
+    # --- 以下构建 UI 逻辑保持不变 ---
     def format_market_cap(val_str):
         try: return f"{float(val_str) / 100000000:.2f}亿"
         except: return val_str
@@ -157,18 +177,14 @@ def parse_and_build_fin_and_quant_ui(input_text):
         c = get_color(val, color_type) if color_type != 'neutral' else "#2d3748"
         return html.Div([
             html.Div(label, style={"color": "#868e96", "fontSize": "0.65rem", "whiteSpace": "nowrap"}),
-            # 【瘦身】：去掉了原有的 marginTop，让数值和标题贴得更紧
             html.Div(val, style={"color": c, "fontWeight": "bold", "fontSize": "0.85rem", "whiteSpace": "nowrap"})
-        # 【瘦身】：将底部的 margin 从 mb-2 压缩到了 mb-1
         ], className="col-4 mb-1", style={"textAlign": "center"})
 
     fin_ui = html.Div([
         html.Div([
-            # 【瘦身】：标题底部间距变小
             html.H6("估值与规模", style={"fontSize": "0.75rem", "fontWeight": "bold", "color": "#495057", "marginBottom": "4px", "paddingBottom": "2px", "borderBottom": "1px solid #e9ecef"}),
             dbc.Row([f_item("总市值", "总市值"), f_item("PE(TTM)", "滚动市盈率 P/E(TTM)"), f_item("PE分位", "市盈率(PE)历史分位", 'percentile')], className="gx-1 mb-0"),
             dbc.Row([f_item("PB", "市净率 P/B"), f_item("PB分位", "市净率(PB)历史分位", 'percentile'), f_item("PS", "市销率 P/S")], className="gx-1 mb-0"),
-        # 【瘦身】：背景块的 padding 从 10px 降到 6px，底部 margin 从 10px 降到 6px
         ], style={"backgroundColor": "#f8f9fa", "padding": "6px", "borderRadius": "6px", "marginBottom": "6px"}),
         
         html.Div([
@@ -178,32 +194,31 @@ def parse_and_build_fin_and_quant_ui(input_text):
         ], style={"backgroundColor": "#f8f9fa", "padding": "6px", "borderRadius": "6px"})
     ])
     
-    # 将字典转为 list 方便判断最后一项
-    quant_items = list(quant_dict.items())
-    
-    quant_ui = html.Div([
-        html.Div([
-            html.Div(k, style={"color": "#495057", "fontSize": "0.75rem", "fontWeight": "bold"}),
+    if not quant_dict:
+        quant_ui = html.Div("暂无量化信号数据", style={"color": "#adb5bd", "fontSize": "0.8rem", "textAlign": "center", "marginTop": "20px"})
+    else:
+        quant_items = list(quant_dict.items())
+        quant_ui = html.Div([
             html.Div([
-                html.Span(f"{v.get('信号', '-')} ", style={"color": "#37b24d" if v.get('信号')=='看空' else "#f03e3e" if v.get('信号') in ['看多','买入'] else "#868e96", "fontWeight": "bold", "fontSize": "0.75rem"}),
-                html.Span(f"({v.get('置信度', '-')})", style={"color": "#adb5bd", "fontSize": "0.7rem"})
-            ])
-        ], style={
-            "display": "flex", "justifyContent": "space-between", 
-            # 最后一项去掉底边框，其余使用精致的虚线
-            "borderBottom": "none" if i == len(quant_items) - 1 else "1px dashed #dee2e6", 
-            "padding": "6px 4px"
-        })
-        for i, (k, v) in enumerate(quant_items)
-    # 外层套上与财务指标一致的浅灰色背景和圆角
-    ], style={"backgroundColor": "#f8f9fa", "padding": "8px 10px", "borderRadius": "6px", "marginTop": "2px"})
+                html.Div(k, style={"color": "#495057", "fontSize": "0.75rem", "fontWeight": "bold"}),
+                html.Div([
+                    html.Span(f"{v.get('信号', '-')} ", style={"color": "#37b24d" if v.get('信号')=='看空' else "#f03e3e" if v.get('信号') in ['看多','买入'] else "#868e96", "fontWeight": "bold", "fontSize": "0.75rem"}),
+                    html.Span(f"({v.get('置信度', '-')})", style={"color": "#adb5bd", "fontSize": "0.7rem"})
+                ])
+            ], style={
+                "display": "flex", "justifyContent": "space-between", 
+                "borderBottom": "none" if i == len(quant_items) - 1 else "1px dashed #dee2e6", 
+                "padding": "6px 4px"
+            })
+            for i, (k, v) in enumerate(quant_items)
+        ], style={"backgroundColor": "#f8f9fa", "padding": "8px 10px", "borderRadius": "6px", "marginTop": "2px"})
     
     formatted_news = []
     if news_text and news_text != "暂无新闻数据":
         for line in news_text.split('\n'):
             line = line.strip()
             if line:
-                formatted_news.append(html.Div(["• ", line], style={"marginBottom": "4px", "lineHeight": "1.3"})) # 压缩新闻行距
+                formatted_news.append(html.Div(["• ", line], style={"marginBottom": "4px", "lineHeight": "1.3"})) 
     else:
         formatted_news = "暂无新闻数据"
         

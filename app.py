@@ -387,11 +387,13 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
         df_monthly = df_monthly_tmp.groupby('year_month').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'}).reset_index()
         df_monthly.rename(columns={'year_month': 'date'}, inplace=True)
         df_monthly['date'] = df_monthly['date'].astype(str)
-        monthly_str = df_monthly.tail(20).to_string(index=False)
+        # 【修改点1】：使用 to_markdown 替代 to_string
+        monthly_str = df_monthly.tail(20).to_markdown(index=False)
     else:
         monthly_str = "暂无"
 
-    daily_str = df_chart.tail(20).to_string(index=False) if not df_chart.empty else "暂无"
+    # 【修改点2】：使用 to_markdown 替代 to_string
+    daily_str = df_chart.tail(20).to_markdown(index=False) if not df_chart.empty else "暂无"
 
     user_msg = f"""基于获得的以下数据和新闻消息，做出你的交易决策。
 
@@ -410,8 +412,7 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
 当前持仓成本: {cost} 元
 
 请记住，行动必须是买入、卖出、持有或观望。
-谨慎考虑交易决策：考虑当前股价是高位还是低位，在低位买入，高位卖出。
-考虑自己的持仓成本，在有足够浮盈的情况下考虑卖出收获现金实利。"""
+请严格结合你的专属交易哲学，从上述客观数据中提取核心矛盾，并给出带有明确止损止盈点位的决策。"""
 
     os.makedirs(f"input/{c_str}", exist_ok=True)
     with open(f"input/{c_str}/{stock_code}_{safe_s_name}_input_{c_str}.txt", 'w', encoding='utf-8') as f: f.write(user_msg)

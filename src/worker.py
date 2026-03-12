@@ -99,7 +99,7 @@ def process(stock_code='600325',
         last_30_days_str = last_30_days.to_string(index=False)
         news_titles = get_news_titles(symbol=stock_code, stock_name=stock_name, max_news=20, current_date=current_date)
 
-        msg = f"""基于获得的以下数据和新闻消息，做出你的交易决策。\n\n{data_input}\n\n最近三十个交易日数据如下：\n{last_30_days_str}\n\n相关新闻如下：\n{news_titles}\n\n当前该股持仓：{stock_position} 股\n当前持仓成本: {stock_holding_cost} 元\n\n请记住，行动必须是买入、卖出、持有或观望。\n谨慎考虑交易决策：考虑当前股价是高位还是低位，在低位买入，高位卖出。\n考虑自己的持仓成本，在有足够浮盈的情况下考虑卖出收获现金实利。"""
+        msg = f"""基于获得的以下数据和新闻消息，做出你的交易决策。\n\n{data_input}\n\n最近三十个交易日数据如下：\n{last_30_days_str}\n\n相关新闻如下：\n{news_titles}\n\n当前该股持仓：{stock_position} 股\n当前持仓成本: {stock_holding_cost} 元\n\n请记住，行动必须是买入、卖出、持有或观望。\n请严格结合你的专属交易哲学，从上述客观数据中提取核心矛盾，并给出带有明确止损止盈点位的决策。"""
         return msg
 
     if os.path.isfile(filepath_in):

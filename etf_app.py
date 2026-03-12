@@ -555,4 +555,4 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
 
 if __name__ == '__main__':
     # 为了避免与主股票程序端口冲突，您可以更换运行端口
-    app.run(debug=True, port=8051)
+    app.run(host='0.0.0.0',debug=True, port=8051)

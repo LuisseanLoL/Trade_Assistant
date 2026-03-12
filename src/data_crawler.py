@@ -74,6 +74,21 @@ def parse_chinese_number(val):
         return float(val) * multiplier
     except:
         return np.nan
+    
+def format_large_number(num):
+    """将大数字格式化为亿、万为单位的字符串"""
+    try:
+        num = float(num)
+        if pd.isna(num) or num == 0.0:
+            return "0.0"
+        if abs(num) >= 1e8:
+            return f"{num / 1e8:.2f}亿"
+        elif abs(num) >= 1e4:
+            return f"{num / 1e4:.2f}万"
+        else:
+            return f"{num:.2f}"
+    except:
+        return str(num)
 
 def calculate_hurst(series):
     """计算赫斯特指数 (Hurst Exponent) 以判断时间序列的平稳性/趋势性"""
@@ -548,7 +563,7 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
         "最新价": latest_close,
         "涨跌幅": f"{pct_change:.2f}%",
         "换手率": f"{turnover_rate:.2f}%",
-        "总市值": market_cap,
+        "总市值": format_large_number(market_cap),
 
         # ---------------- 均线与趋势指标 ----------------
         "MA5": round(safe_float(latest_row.get('MA5')), 2),
@@ -578,9 +593,9 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
         "市销率 P/S": f"{ps_ttm:.2f}",
 
         # ---------------- 盈利与收益质量 (新浪) ----------------
-        "营业总收入(元)": get_fin_metric("营业总收入"),
-        "净利润(元)": get_fin_metric("净利润"),
-        "扣非净利润(元)": get_fin_metric("扣非净利润"),
+        "营业总收入": format_large_number(get_fin_metric("营业总收入")),    # 【修改点】去掉(元)，应用格式化
+        "净利润": format_large_number(get_fin_metric("净利润")),            # 【修改点】去掉(元)，应用格式化
+        "扣非净利润": format_large_number(get_fin_metric("扣非净利润")),    # 【修改点】去掉(元)，应用格式化
         "毛利率": f"{get_fin_metric('毛利率'):.2f}%",
         "营业利润率": f"{get_fin_metric('营业利润率'):.2f}%",
         "销售净利率": f"{get_fin_metric('销售净利率'):.2f}%",
@@ -615,17 +630,49 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     print(f"\n【宏观大盘环境】\n{all_metrics['宏观大盘环境']}")
     print(f"\n【量化策略信号矩阵】\n{all_metrics['strategy_signals']}")
 
-    # 生成传给大模型的最终 Prompt 文本
+    # =====================================================================
+    # 🌟 核心优化：生成结构化、打标分类的最终 Prompt 文本
+    # =====================================================================
     result = []
-    for key, value in all_metrics.items():
-        if key == "strategy_signals":
-            result.append(f"量化策略信号矩阵:\n{value}")
-        elif key == "宏观大盘环境":
-            result.append(f"======\n【宏观大盘环境】\n{value}\n======")
-        else:
-            if isinstance(value, np.float64): value = value.item()
-            result.append(f"{key}: {value}")
+    
+    # 1. 宏观环境
+    result.append(f"======\n【宏观大盘环境】\n{macro_str}\n======")
+    
+    # 2. 基础信息
+    result.append("\n### 【基础与行情数据】")
+    for key in ["股票代码", "股票名称", "所处行业", "最新财务报告期", "最新价", "涨跌幅", "换手率", "总市值", "近52周最高价", "近52周最低价"]:
+        result.append(f"{key}: {all_metrics.get(key, 'N/A')}")
+        
+    # 3. 量化信号
+    result.append("\n### 【量化策略信号矩阵】")
+    result.append(json.dumps(strategy_signals, indent=2, ensure_ascii=False))
+    
+    # 4. 核心财务指标 (打标分类)
+    result.append("\n### 【核心财务指标】")
+    
+    result.append("--- 估值指标 ---")
+    for key in ["滚动市盈率 P/E(TTM)", "市盈率(PE)历史分位", "市净率 P/B", "市净率(PB)历史分位", "市销率 P/S"]:
+        result.append(f"{key}: {all_metrics.get(key, 'N/A')}")
+        
+    result.append("\n--- 盈利与成长能力 ---")
+    # 注意：这里的 key 已经配合上一轮优化去掉了 "(元)"
+    for key in ["营业总收入", "净利润", "扣非净利润", "毛利率", "营业利润率", "销售净利率", "净资产收益率(ROE)", "营业总收入增长率", "净利润增长率"]:
+        result.append(f"{key}: {all_metrics.get(key, 'N/A')}")
+        
+    result.append("\n--- 资产负债与营运能力 ---")
+    for key in ["资产负债率", "流动比率", "速动比率", "应收账款周转天数", "存货周转天数", "总资产周转率"]:
+        result.append(f"{key}: {all_metrics.get(key, 'N/A')}")
+        
+    result.append("\n--- 每股指标 ---")
+    for key in ["基本每股收益", "每股净资产", "每股经营现金流"]:
+        result.append(f"{key}: {all_metrics.get(key, 'N/A')}")
 
+    # 5. 机构预测
+    result.append("\n### 【机构业绩预测】")
+    for key, value in forecast_metrics.items():
+        result.append(f"{key}: {value}")
+
+    # 合并为最终字符串
     text_input = "\n".join(result)
     
     bs.logout()

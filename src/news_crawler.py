@@ -51,7 +51,11 @@ def get_macro_news(current_date_str):
         if not df.empty:
             # 提取近 5 条摘要
             summaries = df['摘要'].head(5).tolist()
-            macro_text = "【宏观财经早餐】\n" + "\n".join(summaries)
+            
+            # 【新增处理逻辑】：遍历摘要，将“【东方财富财经早餐 ”替换为“【”
+            cleaned_summaries = [s.replace("【东方财富财经早餐 ", "【") for s in summaries]
+            
+            macro_text = "【宏观财经早餐】\n" + "\n".join(cleaned_summaries)
             
             # 保存至缓存文件
             with open(cache_file, 'w', encoding='utf-8') as f:
