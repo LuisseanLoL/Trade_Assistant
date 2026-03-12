@@ -142,6 +142,18 @@ content = html.Div([
             ], style={"flexGrow": 1, "overflow": "hidden"})
         ], className="d-flex align-items-center mb-2", style={"width": "100%"}),
         
+        # ================== 【新增】周期与策略展示卡片 ==================
+        dbc.Card([
+            dbc.CardBody([
+                html.Div([
+                    html.I(className="fa-solid fa-compass me-2", style={"color": "#4c6ef5"}),
+                    html.Span("周期与策略定调：", className="fw-bold", style={"color": "#495057", "fontSize": "0.9rem"}),
+                    html.Span("-", id="out-cycle-strategy", style={"color": "#d6336c", "fontWeight": "bold", "fontSize": "0.9rem", "marginLeft": "5px"})
+                ])
+            ], style={"padding": "10px 15px"})
+        ], style=CARD_STYLE, className="mb-2"),
+        # ============================================================
+
         dbc.Row([
             dbc.Col(dbc.Card([dbc.CardBody([html.H6("实时走势与决策标线", className="fw-bold mb-1", style={"color": "#495057", "fontSize": "0.85rem"}), dcc.Graph(id="main-chart", style={"height": "460px"})], style={"padding": "10px"})], style=CARD_STYLE), width=9),
             dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-globe-asia me-2"), "宏观大盘环境"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-macro", style={"height": "460px"})], style={"padding": "10px"})], style=CARD_STYLE), width=3),
@@ -238,6 +250,7 @@ def update_table(active_tab): return load_daily_table_by_date(active_tab) if act
     [Output("main-chart", "figure"), Output("out-stock-name", "children"),
      Output("out-action", "children"), Output("out-expectation", "children"), Output("out-position", "children"), Output("out-confidence", "children"),
      Output("out-buy-price", "children"), Output("out-sell-price", "children"), Output("out-stop-price", "children"), Output("out-model-name", "children"),
+     Output("out-cycle-strategy", "children"), # <---- 【新增】输出周期与策略
      Output("out-reasoning", "children"), Output("out-news", "children"), 
      Output("out-macro", "children"), Output("out-financial", "children"), Output("out-quant", "children"), 
      Output("date-tabs", "children"), Output("date-tabs", "active_tab", allow_duplicate=True), Output("daily-table", "data", allow_duplicate=True)], 
@@ -250,7 +263,8 @@ def update_table(active_tab): return load_daily_table_by_date(active_tab) if act
 )
 def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_pro_switch, pro_model, dual_filter_switch, moa_switch, committee_agents, position, cost, table_data, active_tab):
     ctx = dash.callback_context
-    if not ctx.triggered: return [dash.no_update] * 18
+    # 【修改】：返回值数量增加到 19 个
+    if not ctx.triggered: return [dash.no_update] * 19
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
     use_pro = bool(use_pro_switch)
@@ -300,7 +314,8 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     
     # ================= 分支 1：点击历史记录表查看详情 =================
     if trigger_id == 'daily-table':
-        if not active_cell or active_cell['column_id'] != '详情': return [dash.no_update] * 18
+        # 【修改】：返回值数量增加到 19 个
+        if not active_cell or active_cell['column_id'] != '详情': return [dash.no_update] * 19
         row_data = table_data[active_cell['row']]
         h_stock, h_date, h_stock_name = row_data['股票代码'], active_tab, row_data.get('股票名称', '未知')
         
@@ -336,10 +351,12 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
         stop_display = get_price_display(stop_p, buy_p)
         buy_display = str(buy_p) if buy_p else "-"
         
-        return fig, f"{h_stock_name} ({h_stock})", format_dynamic_color(parsed.get("action"), True), format_dynamic_color(parsed.get("expectation"), False), parsed.get("pos_adv"), parsed.get("confidence"), buy_display, sell_display, stop_display, disp_model, parsed.get("reasoning"), news_t, macro_ui, fin_ui, quant_ui, dash.no_update, dash.no_update, dash.no_update
+        # 【修改】：增加了 parsed.get("cycle_strategy", "-") 的输出位置
+        return fig, f"{h_stock_name} ({h_stock})", format_dynamic_color(parsed.get("action"), True), format_dynamic_color(parsed.get("expectation"), False), parsed.get("pos_adv"), parsed.get("confidence"), buy_display, sell_display, stop_display, disp_model, parsed.get("cycle_strategy", "-"), parsed.get("reasoning"), news_t, macro_ui, fin_ui, quant_ui, dash.no_update, dash.no_update, dash.no_update
 
     # ================= 分支 2：点击“开始分析”触发核心引擎 =================
-    if not stock_code: return [dash.no_update] * 18
+    # 【修改】：返回值数量增加到 19 个
+    if not stock_code: return [dash.no_update] * 19
     c_date = get_logical_date()
     c_str = c_date.strftime("%Y-%m-%d")
     stock_code = stock_code.strip()
@@ -377,6 +394,7 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     stop_display = get_price_display(stop_p, buy_p)
     buy_display = str(buy_p) if buy_p else "-"
 
+    # 【修改】：增加了 "周期与策略" 的输出
     return (
         fig, 
         f"{s_name} ({stock_code})", 
@@ -388,6 +406,7 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
         sell_display, 
         stop_display, 
         disp_model, 
+        parsed.get("cycle_strategy") or parsed.get("周期与策略", "-"), 
         parsed.get("reasoning") or parsed.get("原因"), 
         news_t, 
         macro_ui, 

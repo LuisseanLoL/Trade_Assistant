@@ -12,6 +12,10 @@ output_schema = {
     "schema": {
         "type": "object",
         "properties": {
+        "周期与策略": {
+            "type": "string",
+            "description": "定性大级别位置（如底部/主升浪/顶背离），并明确当前适配的交易策略"
+        },
         "操作": {
             "type": "string",
             "enum": ["买入", "卖出", "持有", "观望"],

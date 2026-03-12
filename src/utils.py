@@ -64,13 +64,17 @@ def get_random_unprocessed_stock():
 
 def parse_llm_json(result_text):
     """从 LLM 的回复中安全提取 JSON 配置"""
-    res = {"action": "-", "expectation": "-", "pos_adv": "-", "confidence": "-", "buy_p": "-", "sell_p": "-", "stop_p": "-", "reasoning": result_text}
+    # 【修改点 1】：默认字典中增加 "cycle_strategy"
+    res = {"action": "-", "expectation": "-", "pos_adv": "-", "confidence": "-", "buy_p": "-", "sell_p": "-", "stop_p": "-", "reasoning": result_text, "cycle_strategy": "-"}
     try:
         c_text = result_text.replace("“", '"').replace("”", '"')
         s_idx, e_idx = c_text.find('{'), c_text.rfind('}')
         if s_idx != -1 and e_idx != -1:
             parsed = json_repair.loads(c_text[s_idx : e_idx + 1])
             res.update({
+                # 【修改点 2】：提取 "周期与策略" 字段
+                "cycle_strategy": parsed.get("周期与策略", "-"),
+                
                 "action": parsed.get("操作", "-"), "expectation": parsed.get("预期", "-"), "pos_adv": f"{parsed.get('建议仓位', 0)}%",
                 "confidence": f"{parsed.get('置信度', 0) * 100:.0f}%", "buy_p": parsed.get('建议买入价'), "sell_p": parsed.get('目标卖出价'),
                 "stop_p": parsed.get('建议止损价'), "reasoning": parsed.get('原因', '暂无深度逻辑')
