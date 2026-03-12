@@ -7,6 +7,10 @@ import os
 import re
 import json
 from datetime import datetime, timedelta
+import time
+import random
+from playwright.sync_api import sync_playwright
+from bs4 import BeautifulSoup
 
 # 引入自定义的新浪实时行情接口
 from src.sina_realtime import SinaRealtimeFetcher
@@ -45,6 +49,130 @@ def get_chart_data(stock_code, beg, end):
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
     bs.logout()
     return df
+
+def get_xq_symbol(symbol: str) -> str:
+    """将股票代码转换为雪球需要的格式 (如: 600000 -> SH600000)"""
+    if symbol.startswith('6'): return f"SH{symbol}"
+    elif symbol.startswith('0') or symbol.startswith('3'): return f"SZ{symbol}"
+    elif symbol.startswith('8') or symbol.startswith('4'): return f"BJ{symbol}"
+    return symbol
+
+def get_xueqiu_dividend_yield(symbol: str) -> str:
+    """使用 Playwright 从雪球网页抓取 股息率(TTM)"""
+    xq_symbol = get_xq_symbol(symbol)
+    url = f"https://xueqiu.com/S/{xq_symbol}"
+    dividend_yield = "N/A"
+
+    try:
+        print(f"🚀 正在通过 Playwright 获取雪球数据: {xq_symbol}...")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                viewport={"width": 1920, "height": 1080}
+            )
+            page = context.new_page()
+            # 隐藏 webdriver 特征，防反爬
+            page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
+            # 随机休眠防反爬
+            time.sleep(random.uniform(1.5, 3.5))
+            
+            page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            
+            # 等待 body 渲染完毕，留一点缓冲时间让 JS 加载报价表格
+            page.wait_for_selector('body', timeout=15000)
+            time.sleep(random.uniform(1.0, 2.0)) 
+            
+            html = page.content()
+            soup = BeautifulSoup(html, 'html.parser')
+            
+            # 将所有文本拼接到一起，然后用正则精确提取
+            text_content = soup.get_text(separator=' ', strip=True)
+            
+            # 匹配 "股息率(TTM): 3.66%" 或无数据时的 "--"
+            match = re.search(r'股息率\(TTM\)[\s:：]*([0-9\.]+%|--)', text_content)
+            if match:
+                dividend_yield = match.group(1)
+                print(f"✅ 成功获取 {symbol} 股息率(TTM): {dividend_yield}")
+            else:
+                print(f"⚠️ 未能在雪球页面找到 {symbol} 的股息率数据。")
+                
+            browser.close()
+    except Exception as e:
+        print(f"❌ 获取雪球股息率失败: {e}")
+        
+    return dividend_yield
+
+def get_ths_fund_flow(stock_code: str) -> pd.DataFrame:
+    """使用 Playwright 从同花顺网页抓取历史资金流向数据"""
+    url = f"https://stockpage.10jqka.com.cn/{stock_code}/funds/"
+    fund_data = []
+    
+    try:
+        print(f"🚀 正在通过 Playwright 获取同花顺历史资金流数据: {stock_code}...")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                viewport={"width": 1920, "height": 1080}
+            )
+            page = context.new_page()
+            # 隐藏 webdriver 特征，防反爬
+            page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
+            time.sleep(random.uniform(1.0, 3.0))
+            page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            
+            # 等待表格加载，同花顺数据有时是异步渲染的
+            page.wait_for_selector('table', timeout=15000)
+            time.sleep(random.uniform(1.5, 2.5)) 
+            
+            html = page.content()
+            soup = BeautifulSoup(html, 'html.parser')
+            
+            # 寻找表头包含 "5日主力净额" 的目标表格
+            target_table = None
+            for table in soup.find_all('table'):
+                if '5日主力净额' in table.get_text() and '大单(主力)' in table.get_text():
+                    target_table = table
+                    break
+                    
+            if target_table:
+                tbody = target_table.find('tbody')
+                if tbody:
+                    for tr in tbody.find_all('tr'):
+                        tds = tr.find_all('td')
+                        # 表格标准数据行应有 11 列
+                        if len(tds) >= 11:
+                            row = [td.get_text(strip=True) for td in tds]
+                            fund_data.append(row)
+                            
+            browser.close()
+    except Exception as e:
+        print(f"❌ 获取同花顺资金数据失败: {e}")
+        
+    if fund_data:
+        # 定义列名，与网页表格列对应
+        columns = ['日期', '收盘价', '涨跌幅', '资金净流入', '5日主力净额', '大单净额', '大单净占比', '中单净额', '中单净占比', '小单净额', '小单净占比']
+        df = pd.DataFrame(fund_data, columns=columns)
+        
+        # 格式化日期以便与 k_df 对齐：20260312 -> 2026-03-12
+        df['date'] = df['日期'].apply(lambda x: f"{x[:4]}-{x[4:6]}-{x[6:8]}" if len(x) == 8 else x)
+        
+        # 提取需要的资金特征列
+        cols_to_keep = ['date', '资金净流入', '5日主力净额', '大单净额', '大单净占比', '中单净额', '中单净占比', '小单净额', '小单净占比']
+        df = df[cols_to_keep].copy()
+        
+        # 将带有百分号和逗号的字符串转换为浮点数
+        for col in cols_to_keep[1:]:
+            df[col] = df[col].str.replace('%', '').str.replace(',', '').apply(safe_float)
+            
+        return df
+        
+    # 获取失败时返回空 DataFrame
+    return pd.DataFrame()
+
 # ========================================
 
 def safe_float(val, default=0.0):
@@ -483,6 +611,9 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     except:
         forecast_metrics['机构预测'] = '接口获取失败'
 
+    # ---------------- 抓取雪球股息率 ----------------
+    dividend_yield_ttm = get_xueqiu_dividend_yield(stock_code)
+
     # ---------------- 动态生成策略信号 ----------------
     adx_val = safe_float(latest_row.get('adx'))
     p_di = safe_float(latest_row.get('+di'))
@@ -591,6 +722,7 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
         "市净率 P/B": f"{pb_mrq:.2f}",
         "市净率(PB)历史分位": f"{safe_float(latest_row.get('pb_rank')):.2f}%",
         "市销率 P/S": f"{ps_ttm:.2f}",
+        "股息率(TTM)": dividend_yield_ttm,  # <== 新增这一行
 
         # ---------------- 盈利与收益质量 (新浪) ----------------
         "营业总收入": format_large_number(get_fin_metric("营业总收入")),    # 【修改点】去掉(元)，应用格式化
@@ -651,7 +783,8 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     result.append("\n### 【核心财务指标】")
     
     result.append("--- 估值指标 ---")
-    for key in ["滚动市盈率 P/E(TTM)", "市盈率(PE)历史分位", "市净率 P/B", "市净率(PB)历史分位", "市销率 P/S"]:
+    # 将 "股息率(TTM)" 加进列表
+    for key in ["滚动市盈率 P/E(TTM)", "市盈率(PE)历史分位", "市净率 P/B", "市净率(PB)历史分位", "市销率 P/S", "股息率(TTM)"]:
         result.append(f"{key}: {all_metrics.get(key, 'N/A')}")
         
     result.append("\n--- 盈利与成长能力 ---")

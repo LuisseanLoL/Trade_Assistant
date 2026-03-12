@@ -22,7 +22,7 @@ logging.getLogger("requests").setLevel(logging.WARNING)
 load_dotenv()
 
 # 导入 src 模块
-from src.data_crawler import get_stock_data, get_stock_name_bs, get_chart_data
+from src.data_crawler import get_stock_data, get_stock_name_bs, get_chart_data, get_ths_fund_flow
 from src.LLM_chat import get_LLM_message, get_model_config
 from src.utils import (
     get_logical_date, 
@@ -374,6 +374,17 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     safe_s_name = re.sub(r'[\\/:*?"<>|]', '', s_name) 
     
     df_chart = get_chart_data(stock_code, beg, end)
+
+    # 🌟 核心新增：获取资金流数据并拼接到 K线 DataFrame 中
+    try:
+        fund_df = get_ths_fund_flow(stock_code)
+        if not fund_df.empty:
+            # 按日期左连接，保证主时间轴不断裂
+            df_chart = pd.merge(df_chart, fund_df, on='date', how='left')
+    except Exception as e:
+        print(f"合并资金数据到日常图表失败: {e}")
+    # =========================================================
+
     s_price = df_chart['close'].iloc[-1] if not df_chart.empty else 0
     fig = create_advanced_kline_fig(df_chart)
 
