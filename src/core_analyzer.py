@@ -117,7 +117,7 @@ def run_core_analysis(
             
             def agent_task(agent_name):
                 try:
-                    with open(f"agents_text/{agent_name}.txt", "r", encoding="utf-8") as f:
+                    with open(f"src/agents_text/{agent_name}.txt", "r", encoding="utf-8") as f:
                         agent_persona = f.read()
                     agent_sys_content = f"{agent_persona}\n\n====================\n以下是系统级硬性约束，你必须严格遵守：\n{format_rules}"
                     return get_LLM_message(system_content=agent_sys_content, user_message=user_msg, model_id=committee_model)

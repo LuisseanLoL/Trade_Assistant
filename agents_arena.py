@@ -34,7 +34,7 @@ COMMON_OUTPUT_FORMAT = """
 - 只有在投资组合中当前持有该股票（持仓>0）的情况下才能下达“卖出”或“持有”指令。
 """
 
-def load_personas_from_dir(directory_path="agents_text", common_suffix=COMMON_OUTPUT_FORMAT):
+def load_personas_from_dir(directory_path="src/agents_text", common_suffix=COMMON_OUTPUT_FORMAT):
     """
     动态从指定文件夹读取所有的角色 txt 文件，并附加统一的输出格式
     """
@@ -181,7 +181,7 @@ def run_model_arena(personas_dict, input_file, test_models=None, output_dir="are
 
 if __name__ == "__main__":
     # 1. 从文件夹动态加载所有角色提示词
-    test_personas = load_personas_from_dir("agents_text")
+    test_personas = load_personas_from_dir("src/agents_text")
     
     if test_personas:
         # 2. 配置输入文件和参赛模型

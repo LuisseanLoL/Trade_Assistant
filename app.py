@@ -55,7 +55,7 @@ else:
 
 # 动态获取 Agents 列表
 def get_agent_options():
-    agent_files = glob.glob("agents_text/*.txt")
+    agent_files = glob.glob("src/agents_text/*.txt")
     options = []
     for f in agent_files:
         name = os.path.basename(f).replace(".txt", "")

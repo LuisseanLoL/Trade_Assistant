@@ -46,7 +46,7 @@ def get_logical_date():
 
 def get_agent_options():
     """动态获取 agents_text 目录下的所有 Agent 角色"""
-    agent_files = glob.glob("agents_text/*.txt")
+    agent_files = glob.glob("src/agents_text/*.txt")
     options = []
     for f in agent_files:
         name = os.path.basename(f).replace(".txt", "")
