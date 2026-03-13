@@ -25,17 +25,16 @@ def get_bs_code(symbol: str) -> str:
 
 # ========== 新增拆分出来的函数 ==========
 def get_stock_name_bs(stock_code):
-    bs.login()
+    """获取股票名称 (注：需在外部统一调用 bs.login() 和 bs.logout())"""
     bs_code = get_bs_code(stock_code)
     rs_basic = bs.query_stock_basic(code=bs_code)
     stock_name = "未知名称"
     if rs_basic.error_code == '0' and rs_basic.next():
         stock_name = rs_basic.get_row_data()[1]
-    bs.logout()
     return stock_name
 
 def get_chart_data(stock_code, beg, end):
-    bs.login()
+    """获取日 K 线数据 (注：需在外部统一调用 bs.login() 和 bs.logout())"""
     bs_code = get_bs_code(stock_code)
     bs_start = f"{beg[:4]}-{beg[4:6]}-{beg[6:]}"
     bs_end = f"{end[:4]}-{end[4:6]}-{end[6:]}"
@@ -47,7 +46,27 @@ def get_chart_data(stock_code, beg, end):
     df = pd.DataFrame(data_list, columns=rs.fields)
     for col in ["open", "high", "low", "close", "volume"]:
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
-    bs.logout()
+    return df
+
+def get_30m_chart_data(stock_code, beg, end):
+    """获取 30 分钟 K 线数据 (注：需在外部统一调用 bs.login() 和 bs.logout())"""
+    bs_code = get_bs_code(stock_code)
+    bs_start = f"{beg[:4]}-{beg[4:6]}-{beg[6:]}"
+    bs_end = f"{end[:4]}-{end[4:6]}-{end[6:]}"
+    
+    # 注意：分钟线的 fields 参数与日线不同，且不支持指数
+    fields = "date,time,code,open,high,low,close,volume,amount,adjustflag"
+    rs = bs.query_history_k_data_plus(bs_code, fields, start_date=bs_start, end_date=bs_end, frequency="30", adjustflag="2")
+    
+    data_list = []
+    while (rs.error_code == '0') & rs.next(): 
+        data_list.append(rs.get_row_data())
+        
+    df = pd.DataFrame(data_list, columns=rs.fields)
+    for col in ["open", "high", "low", "close", "volume", "amount"]:
+        if col in df.columns: 
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+            
     return df
 
 def get_xq_symbol(symbol: str) -> str:
@@ -435,6 +454,7 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     """
     获取股票历史数据, 计算技术指标, 并保存为CSV文件 
     (行情基于 Baostock，财务基于新浪，机构预测基于同花顺)
+    注：需要在外部统一切换 bs.login() 和 bs.logout() 控制连接。
     """
     now = datetime.now()
     is_weekend = now.weekday() >= 5
@@ -454,7 +474,6 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     # 优先拉取大盘宏观环境
     macro_str = get_macro_market_context(current_date)
     
-    bs.login()
     bs_code = get_bs_code(stock_code)
 
     try:
@@ -722,12 +741,12 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
         "市净率 P/B": f"{pb_mrq:.2f}",
         "市净率(PB)历史分位": f"{safe_float(latest_row.get('pb_rank')):.2f}%",
         "市销率 P/S": f"{ps_ttm:.2f}",
-        "股息率(TTM)": dividend_yield_ttm,  # <== 新增这一行
+        "股息率(TTM)": dividend_yield_ttm,
 
         # ---------------- 盈利与收益质量 (新浪) ----------------
-        "营业总收入": format_large_number(get_fin_metric("营业总收入")),    # 【修改点】去掉(元)，应用格式化
-        "净利润": format_large_number(get_fin_metric("净利润")),            # 【修改点】去掉(元)，应用格式化
-        "扣非净利润": format_large_number(get_fin_metric("扣非净利润")),    # 【修改点】去掉(元)，应用格式化
+        "营业总收入": format_large_number(get_fin_metric("营业总收入")),
+        "净利润": format_large_number(get_fin_metric("净利润")),
+        "扣非净利润": format_large_number(get_fin_metric("扣非净利润")),
         "毛利率": f"{get_fin_metric('毛利率'):.2f}%",
         "营业利润率": f"{get_fin_metric('营业利润率'):.2f}%",
         "销售净利率": f"{get_fin_metric('销售净利率'):.2f}%",
@@ -783,12 +802,10 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     result.append("\n### 【核心财务指标】")
     
     result.append("--- 估值指标 ---")
-    # 将 "股息率(TTM)" 加进列表
     for key in ["滚动市盈率 P/E(TTM)", "市盈率(PE)历史分位", "市净率 P/B", "市净率(PB)历史分位", "市销率 P/S", "股息率(TTM)"]:
         result.append(f"{key}: {all_metrics.get(key, 'N/A')}")
         
     result.append("\n--- 盈利与成长能力 ---")
-    # 注意：这里的 key 已经配合上一轮优化去掉了 "(元)"
     for key in ["营业总收入", "净利润", "扣非净利润", "毛利率", "营业利润率", "销售净利率", "净资产收益率(ROE)", "营业总收入增长率", "净利润增长率"]:
         result.append(f"{key}: {all_metrics.get(key, 'N/A')}")
         
@@ -807,8 +824,6 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
 
     # 合并为最终字符串
     text_input = "\n".join(result)
-    
-    bs.logout()
     
     # 周末保存文本缓存，避免同日多次执行或不同脚本调用时重复走 API
     if is_weekend:

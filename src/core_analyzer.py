@@ -5,8 +5,9 @@ import concurrent.futures
 import pandas as pd
 from datetime import datetime, timedelta
 import json_repair
+import baostock as bs
 
-from src.data_crawler import get_stock_data, get_stock_name_bs, get_chart_data, get_ths_fund_flow
+from src.data_crawler import get_stock_data, get_stock_name_bs, get_chart_data, get_ths_fund_flow, get_30m_chart_data, format_large_number
 from src.LLM_chat import get_LLM_message, get_model_config
 from src.utils import fetch_news_safely, parse_llm_json
 
@@ -23,25 +24,36 @@ def run_core_analysis(
     if not committee_model:
         committee_model = flash_model
         
-    s_name = get_stock_name_bs(stock_code)
-    safe_s_name = re.sub(r'[\\/:*?"<>|]', '', s_name) 
-    
     c_date = datetime.strptime(current_date_str, "%Y-%m-%d").date() # 加上 .date() 剥离多余的时间信息
     end = c_date.strftime("%Y%m%d") # 直接使用 strftime，比 isoformat 替换更安全
     beg = (c_date - timedelta(days=720)).strftime("%Y%m%d")
 
-    # 1. 组装数据 (统一使用 app.py 的最新逻辑)
-    df_chart = get_chart_data(stock_code, beg, end)
+    # ================= 统一接管 BaoStock 登录 =================
+    bs.login()
     try:
-        fund_df = get_ths_fund_flow(stock_code)
-        if not fund_df.empty:
-            df_chart = pd.merge(df_chart, fund_df, on='date', how='left')
-    except Exception as e:
-        print(f"合并资金数据到日常图表失败: {e}")
+        s_name = get_stock_name_bs(stock_code)
+        safe_s_name = re.sub(r'[\\/:*?"<>|]', '', s_name) 
+        
+        # 1. 组装数据 (统一使用 app.py 的最新逻辑)
+        df_chart = get_chart_data(stock_code, beg, end)
+        df_30m = get_30m_chart_data(stock_code, beg, end)
 
-    s_price = df_chart['close'].iloc[-1] if not df_chart.empty else 0
+        try:
+            fund_df = get_ths_fund_flow(stock_code)
+            if not fund_df.empty:
+                df_chart = pd.merge(df_chart, fund_df, on='date', how='left')
+        except Exception as e:
+            print(f"合并资金数据到日常图表失败: {e}")
 
-    in_str = get_stock_data(stock_code=stock_code, beg=beg, end=end, current_date=current_date_str)
+        s_price = df_chart['close'].iloc[-1] if not df_chart.empty else 0
+
+        in_str = get_stock_data(stock_code=stock_code, beg=beg, end=end, current_date=current_date_str)
+        
+    finally:
+        # ================= 统一接管 BaoStock 登出 =================
+        bs.logout()
+        
+    # 新闻获取不需要 bs 登录，可以放在外面
     news_titles = fetch_news_safely(stock_code, safe_s_name, current_date_str)
     
     if not df_chart.empty:
@@ -51,20 +63,40 @@ def run_core_analysis(
         df_monthly = df_monthly_tmp.groupby('year_month').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'}).reset_index()
         df_monthly.rename(columns={'year_month': 'date'}, inplace=True)
         df_monthly['date'] = df_monthly['date'].astype(str)
-        monthly_str = df_monthly.tail(20).to_markdown(index=False)
+        monthly_str = df_monthly.tail(24).to_markdown(index=False)
     else:
         monthly_str = "暂无"
 
-    daily_str = df_chart.tail(20).to_markdown(index=False) if not df_chart.empty else "暂无"
+    daily_str = df_chart.tail(24).to_markdown(index=False) if not df_chart.empty else "暂无"
+    df_30m_str = df_30m.tail(24).to_markdown(index=False) if not df_30m.empty else "暂无"
+    if not df_30m.empty:
+        df_30m_tmp = df_30m.copy()
+        
+        # 格式化 time 列：取字符串的第8-9位(时)和第10-11位(分)，中间加冒号
+        if 'time' in df_30m_tmp.columns:
+            df_30m_tmp['time'] = df_30m_tmp['time'].astype(str).apply(
+                lambda x: f"{x[8:10]}:{x[10:12]}" if len(x) >= 12 else x
+            )
+            
+        # 格式化 amount 列：调用刚才导入的 format_large_number
+        if 'amount' in df_30m_tmp.columns:
+            df_30m_tmp['amount'] = df_30m_tmp['amount'].apply(format_large_number)
+            
+        df_30m_str = df_30m_tmp.tail(24).to_markdown(index=False)
+    else:
+        df_30m_str = "暂无"
 
     user_msg = f"""基于获得的以下数据和新闻消息，做出你的交易决策。
 
 {in_str}
 
-最近二十个交易日数据如下：
+最近二十四个 30分钟 K线数据如下：
+{df_30m_str}
+
+最近二十四个交易日数据如下：
 {daily_str}
 
-最近二十个月K线数据如下：
+最近二十四个月 K线数据如下：
 {monthly_str}
 
 相关新闻如下：

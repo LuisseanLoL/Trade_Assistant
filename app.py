@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 import os
 import glob
 import logging
+from dash import DiskcacheManager
+import diskcache
 from dotenv import load_dotenv
 
 # 屏蔽底层 HTTP 库的 INFO 级别请求日志，避免大模型 API 刷屏
@@ -71,7 +73,18 @@ default_agent_names = [
 ]
 default_agents = [opt['value'] for opt in AGENT_OPTIONS if opt['value'] in default_agent_names]
 
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.LUMEN, dbc.icons.FONT_AWESOME], prevent_initial_callbacks="initial_duplicate") # type: ignore
+# Initialize the long callback manager
+cache = diskcache.Cache("./cache")
+
+# 🌟 注意这里名字变短了，去掉了 LongCallback
+background_callback_manager = DiskcacheManager(cache)
+
+app = dash.Dash(
+    __name__, 
+    external_stylesheets=[dbc.themes.LUMEN, dbc.icons.FONT_AWESOME], 
+    prevent_initial_callbacks="initial_duplicate",
+    background_callback_manager=background_callback_manager # 新增这行
+)
 app.title = "AI Trade Assistant"
 
 sidebar = html.Div([
@@ -259,7 +272,13 @@ def update_table(active_tab): return load_daily_table_by_date(active_tab) if act
      State("dropdown-flash-model", "value"), State("switch-use-pro", "value"), State("dropdown-pro-model", "value"), State("switch-dual-filter", "value"),
      State("switch-use-moa", "value"), State("dropdown-committee-agents", "value"), 
      State("input-position", "value"), State("input-cost", "value"), State("daily-table", "derived_viewport_data"), State("date-tabs", "active_tab")],
-    prevent_initial_call=True
+    prevent_initial_call=True,
+    background=True,  # 🌟 关键：开启后台运行
+    manager=background_callback_manager,
+    running=[
+        (Output("btn-analyze", "disabled"), True, False), # 运行时禁用按钮，运行完恢复
+        (Output("btn-analyze", "children"), "大脑飞速运转中...", "开始分析"), # 更改按钮文字
+    ]
 )
 def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_pro_switch, pro_model, dual_filter_switch, moa_switch, committee_agents, position, cost, table_data, active_tab):
     ctx = dash.callback_context

@@ -20,6 +20,7 @@ output_etf/
 test/
 arena_results/
 key/
+cache/
 
 portfolio.csv
 test.ipynb
