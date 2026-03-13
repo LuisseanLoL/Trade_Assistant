@@ -96,10 +96,10 @@ def run_core_analysis(
         else:
             res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=flash_model)
             try:
-                c_text = res_text.replace("“", '"').replace("”", '"')
+                c_text = res_text.replace("“", '"').replace("”", '"') # type: ignore
                 s_idx, e_idx = c_text.find('{'), c_text.rfind('}')
                 if s_idx != -1 and e_idx != -1:
-                    action_result = json_repair.loads(c_text[s_idx : e_idx + 1]).get('操作', '')
+                    action_result = json_repair.loads(c_text[s_idx : e_idx + 1]).get('操作', '') # type: ignore
                     if action_result in ['买入', '卖出', '持有']: run_pro = True
             except: 
                 run_pro = True 
@@ -160,7 +160,7 @@ def run_core_analysis(
 
     os.makedirs(f"output/{current_date_str}", exist_ok=True)
     with open(f"output/{current_date_str}/{stock_code}_{safe_s_name}_output_{model_tag}_{current_date_str}.txt", 'w', encoding='utf-8') as f: 
-        f.write(res_text)
+        f.write(res_text) # type: ignore
 
     parsed = parse_llm_json(res_text)
 

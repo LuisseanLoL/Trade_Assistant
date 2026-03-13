@@ -90,7 +90,7 @@ def process_single_model_and_persona(persona_name, model_id, display_name, syste
         output_path = os.path.join(run_dir, f"{file_name}.json")
         with open(output_path, 'w', encoding='utf-8') as f:
             try:
-                clean_result = result.strip()
+                clean_result = result.strip() # type: ignore
                 if clean_result.startswith('```json'):
                     clean_result = clean_result[7:-3].strip()
                 elif clean_result.startswith('```'):
@@ -101,7 +101,7 @@ def process_single_model_and_persona(persona_name, model_id, display_name, syste
                 
             except json.JSONDecodeError:
                 # 发生幻觉或格式崩溃，回退保存为纯文本
-                f.write(result)
+                f.write(result) # type: ignore
                 print(f"⚠️ [{persona_name} | {display_name}] 警告: 输出格式非标准 JSON，已回退保存为纯文本。")
                 
     except Exception as e:

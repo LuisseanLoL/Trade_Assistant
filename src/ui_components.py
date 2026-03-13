@@ -27,13 +27,13 @@ def get_index_kline_fig():
             
             fig.update_xaxes(showticklabels=False)
             
-            if len(fig.layout.updatemenus) >= 2:
-                fig.layout.updatemenus[0].font.size = 9
-                fig.layout.updatemenus[1].font.size = 9
-                fig.layout.updatemenus[0].x = 0
-                fig.layout.updatemenus[0].y = 1.10 
-                fig.layout.updatemenus[1].x = 0.52 
-                fig.layout.updatemenus[1].y = 1.10 
+            if len(fig.layout.updatemenus) >= 2: # type: ignore
+                fig.layout.updatemenus[0].font.size = 9 # type: ignore
+                fig.layout.updatemenus[1].font.size = 9 # type: ignore
+                fig.layout.updatemenus[0].x = 0 # type: ignore
+                fig.layout.updatemenus[0].y = 1.10  # type: ignore
+                fig.layout.updatemenus[1].x = 0.52  # type: ignore
+                fig.layout.updatemenus[1].y = 1.10  # type: ignore
                 
             return fig
         except Exception as e: 
@@ -197,7 +197,7 @@ def parse_and_build_fin_and_quant_ui(input_text):
     if not quant_dict:
         quant_ui = html.Div("暂无量化信号数据", style={"color": "#adb5bd", "fontSize": "0.8rem", "textAlign": "center", "marginTop": "20px"})
     else:
-        quant_items = list(quant_dict.items())
+        quant_items = list(quant_dict.items()) # type: ignore
         quant_ui = html.Div([
             html.Div([
                 html.Div(k, style={"color": "#495057", "fontSize": "0.75rem", "fontWeight": "bold"}),

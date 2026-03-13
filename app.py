@@ -71,7 +71,7 @@ default_agent_names = [
 ]
 default_agents = [opt['value'] for opt in AGENT_OPTIONS if opt['value'] in default_agent_names]
 
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.LUMEN, dbc.icons.FONT_AWESOME], prevent_initial_callbacks="initial_duplicate")
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.LUMEN, dbc.icons.FONT_AWESOME], prevent_initial_callbacks="initial_duplicate") # type: ignore
 app.title = "AI Trade Assistant"
 
 sidebar = html.Div([
@@ -94,11 +94,11 @@ sidebar = html.Div([
         # --- 模型架构解耦配置 ---
         html.H6("流水线模型配置", className="text-muted fw-bold mb-2", style={"fontSize": "0.8rem", "letterSpacing": "1px"}),
         html.Label("1. 基础/初筛模型 (Actor)", className="small fw-bold text-secondary mb-1"),
-        dbc.Select(id="dropdown-flash-model", options=MODEL_OPTIONS, value=default_flash_model, className="mb-2", size="sm"),
+        dbc.Select(id="dropdown-flash-model", options=MODEL_OPTIONS, value=default_flash_model, className="mb-2", size="sm"), # type: ignore
         
         dbc.Checklist(options=[{"label": "2. 启用 Pro 模型 (或裁判)", "value": 1}], value=[1], id="switch-use-pro", switch=True, className="mb-1 text-secondary small fw-bold"),
         html.Label("选择 Pro / 裁判模型 (Judge)", className="small fw-bold text-secondary mb-1"),
-        dbc.Select(id="dropdown-pro-model", options=MODEL_OPTIONS, value=default_pro_model, className="mb-2", size="sm"),
+        dbc.Select(id="dropdown-pro-model", options=MODEL_OPTIONS, value=default_pro_model, className="mb-2", size="sm"), # type: ignore
 
         dbc.Checklist(options=[{"label": "3. 启用双重筛选过滤", "value": 1}], value=[], id="switch-dual-filter", switch=True, className="mb-2 text-secondary small fw-bold"),
 
@@ -206,7 +206,7 @@ content = html.Div([
                     {'if': {'filter_query': '{操作} = "卖出"'}, 'color': '#2f9e44', 'fontWeight': 'bold'},
                     {'if': {'column_id': '详情'}, 'cursor': 'pointer', 'color': '#4c6ef5', 'fontWeight': 'bold', 'backgroundColor': '#f0f4ff'},
                     {'if': {'column_id': '详情', 'state': 'active'}, 'backgroundColor': '#dce4ff', 'border': '1px solid #4c6ef5'}
-                ],
+                ], # type: ignore
                 page_size=5
             )
         ], style={"padding": "10px"})
@@ -342,9 +342,9 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
         
         if not df_chart.empty:
             buy_p, sell_p, stop_p = parsed.get("buy_p"), parsed.get("sell_p"), parsed.get("stop_p")
-            if buy_p and str(buy_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(buy_p), line_dash="dot", line_color="#be4bdb", annotation_text="买点", row=1, col=1)
-            if sell_p and str(sell_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(sell_p), line_dash="dot", line_color="#f03e3e", annotation_text="目标", row=1, col=1)
-            if stop_p and str(stop_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(stop_p), line_dash="dot", line_color="#37b24d", annotation_text="止损", row=1, col=1)
+            if buy_p and str(buy_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(buy_p), line_dash="dot", line_color="#be4bdb", annotation_text="买点", row=1, col=1) # type: ignore
+            if sell_p and str(sell_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(sell_p), line_dash="dot", line_color="#f03e3e", annotation_text="目标", row=1, col=1) # type: ignore
+            if stop_p and str(stop_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(stop_p), line_dash="dot", line_color="#37b24d", annotation_text="止损", row=1, col=1) # type: ignore
         
         buy_p, sell_p, stop_p = parsed.get("buy_p"), parsed.get("sell_p"), parsed.get("stop_p")
         sell_display = get_price_display(sell_p, buy_p)
@@ -381,9 +381,9 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     buy_p, sell_p, stop_p = parsed.get("buy_p") or parsed.get("建议买入价"), parsed.get("sell_p") or parsed.get("目标卖出价"), parsed.get("stop_p") or parsed.get("建议止损价")
     
     if not df_chart.empty:
-        if buy_p and str(buy_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(buy_p), line_dash="dot", line_color="#be4bdb", annotation_text="买点", row=1, col=1)
-        if sell_p and str(sell_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(sell_p), line_dash="dot", line_color="#f03e3e", annotation_text="目标", row=1, col=1)
-        if stop_p and str(stop_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(stop_p), line_dash="dot", line_color="#37b24d", annotation_text="止损", row=1, col=1)
+        if buy_p and str(buy_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(buy_p), line_dash="dot", line_color="#be4bdb", annotation_text="买点", row=1, col=1) # type: ignore
+        if sell_p and str(sell_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(sell_p), line_dash="dot", line_color="#f03e3e", annotation_text="目标", row=1, col=1) # type: ignore
+        if stop_p and str(stop_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(stop_p), line_dash="dot", line_color="#37b24d", annotation_text="止损", row=1, col=1) # type: ignore
 
     # 渲染子 UI 组件
     macro_ui = parse_and_build_macro_ui(user_msg)
