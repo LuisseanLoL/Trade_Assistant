@@ -10,6 +10,7 @@ __pycache__/
 venv/
 .venv/
 env/
+.vscode/
 
 # 本地量化数据与日志 (无需上传)
 log/
