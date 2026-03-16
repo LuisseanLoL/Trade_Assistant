@@ -25,38 +25,71 @@ def get_bs_code(symbol: str) -> str:
 
 # ========== 新增拆分出来的函数 ==========
 def get_stock_name_bs(stock_code):
-    """获取股票名称 (注：需在外部统一调用 bs.login() 和 bs.logout())"""
+    """获取股票名称 (支持在外部统一控制连接，兼容独立调用)"""
     bs_code = get_bs_code(stock_code)
     rs_basic = bs.query_stock_basic(code=bs_code)
+    
+    # 兼容前端单独调用的智能检测
+    need_logout = False
+    if rs_basic.error_code != '0' and "login" in str(rs_basic.error_msg).lower():
+        bs.login()
+        rs_basic = bs.query_stock_basic(code=bs_code)
+        need_logout = True
+        
     stock_name = "未知名称"
     if rs_basic.error_code == '0' and rs_basic.next():
         stock_name = rs_basic.get_row_data()[1]
+        
+    if need_logout:
+        bs.logout()
+        
     return stock_name
 
 def get_chart_data(stock_code, beg, end):
-    """获取日 K 线数据 (注：需在外部统一调用 bs.login() 和 bs.logout())"""
+    """获取日 K 线数据 (支持在外部统一控制连接，兼容独立调用)"""
     bs_code = get_bs_code(stock_code)
     bs_start = f"{beg[:4]}-{beg[4:6]}-{beg[6:]}"
     bs_end = f"{end[:4]}-{end[4:6]}-{end[6:]}"
     
-    rs = bs.query_history_k_data_plus(bs_code, "date,open,high,low,close,volume", start_date=bs_start, end_date=bs_end, frequency="d", adjustflag="2")
+    fields = "date,open,high,low,close,volume"
+    rs = bs.query_history_k_data_plus(bs_code, fields, start_date=bs_start, end_date=bs_end, frequency="d", adjustflag="2")
+    
+    # 兼容前端单独调用的智能检测
+    need_logout = False
+    if rs.error_code != '0' and "login" in str(rs.error_msg).lower():
+        bs.login()
+        rs = bs.query_history_k_data_plus(bs_code, fields, start_date=bs_start, end_date=bs_end, frequency="d", adjustflag="2")
+        need_logout = True
+
     data_list = []
-    while (rs.error_code == '0') & rs.next(): data_list.append(rs.get_row_data())
+    while (rs.error_code == '0') & rs.next(): 
+        data_list.append(rs.get_row_data())
         
     df = pd.DataFrame(data_list, columns=rs.fields)
     for col in ["open", "high", "low", "close", "volume"]:
-        if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
+        if col in df.columns: 
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+    if need_logout:
+        bs.logout()
+        
     return df
 
 def get_30m_chart_data(stock_code, beg, end):
-    """获取 30 分钟 K 线数据 (注：需在外部统一调用 bs.login() 和 bs.logout())"""
+    """获取 30 分钟 K 线数据 (支持在外部统一控制连接，兼容独立调用)"""
     bs_code = get_bs_code(stock_code)
     bs_start = f"{beg[:4]}-{beg[4:6]}-{beg[6:]}"
     bs_end = f"{end[:4]}-{end[4:6]}-{end[6:]}"
     
-    # 注意：分钟线的 fields 参数与日线不同，且不支持指数
     fields = "date,time,code,open,high,low,close,volume,amount,adjustflag"
     rs = bs.query_history_k_data_plus(bs_code, fields, start_date=bs_start, end_date=bs_end, frequency="30", adjustflag="2")
+    
+    # 兼容前端单独调用的智能检测
+    need_logout = False
+    if rs.error_code != '0' and "login" in str(rs.error_msg).lower():
+        bs.login()
+        rs = bs.query_history_k_data_plus(bs_code, fields, start_date=bs_start, end_date=bs_end, frequency="30", adjustflag="2")
+        need_logout = True
     
     data_list = []
     while (rs.error_code == '0') & rs.next(): 
@@ -66,6 +99,9 @@ def get_30m_chart_data(stock_code, beg, end):
     for col in ["open", "high", "low", "close", "volume", "amount"]:
         if col in df.columns: 
             df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+    if need_logout:
+        bs.logout()
             
     return df
 
