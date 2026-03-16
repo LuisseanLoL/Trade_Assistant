@@ -15,6 +15,13 @@ from src.LLM_chat import get_model_config
 # 在所有逻辑开始前，强制加载根目录的 .env 文件
 load_dotenv()
 
+# 🎯 针对 A 股市场特色精选的 11 位默认参会大师
+DEFAULT_AGENT_NAMES = [
+    "A_Share_Hot_Money", "Richard_Wyckoff", "Jesse_Livermore", 
+    "William_O'Neil", "Peter_Lynch", "George_Soros", "Howard_Marks",
+    "Ray_Dalio", "Paul_Tudor_Jones", "Jim_Simons", "Charlie_Munger",
+]
+
 def load_portfolio(csv_path="portfolio.csv"):
     """
     读取持仓清单，返回字典格式：
@@ -45,12 +52,18 @@ def get_logical_date():
     return now.date()
 
 def get_agent_options():
-    """动态获取 agents_text 目录下的所有 Agent 角色"""
+    """动态获取 agents_text 目录下的所有 Agent 角色，并高亮/勾选默认大师"""
     agent_files = glob.glob("src/agents_text/*.txt")
     options = []
     for f in agent_files:
         name = os.path.basename(f).replace(".txt", "")
-        options.append(Choice(name.replace("_", " "), value=name))
+        
+        # 判断当前大师是否在默认名单中
+        is_default = name in DEFAULT_AGENT_NAMES
+        
+        # 使用 checked=is_default 来初始化勾选状态
+        options.append(Choice(name.replace("_", " "), value=name, checked=is_default))
+        
     return sorted(options, key=lambda x: x.title)
 
 def main():
@@ -143,7 +156,7 @@ def main():
                 use_moa = False
             else:
                 committee_agents = questionary.checkbox(
-                    "请选择【MoA：参会大师 (Agent 角色)】(建议2-4个)：",
+                    "请选择【MoA：参会大师 (Agent 角色)】：",
                     choices=agent_choices
                 ).ask()
                 

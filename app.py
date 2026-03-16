@@ -66,10 +66,11 @@ def get_agent_options():
 
 AGENT_OPTIONS = get_agent_options()
 
-# 针对 A 股市场特色精选的 7 位默认参会大师
+# 针对 A 股市场特色精选的 11 位默认参会大师
 default_agent_names = [
     "A_Share_Hot_Money", "Richard_Wyckoff", "Jesse_Livermore", 
-    "Cathie_Wood", "Peter_Lynch", "Stanley_Druckenmiller", "Warren_Buffett"
+    "William_O'Neil", "Peter_Lynch", "George_Soros", "Howard_Marks",
+    "Ray_Dalio", "Paul_Tudor_Jones", "Jim_Simons", "Charlie_Munger",
 ]
 default_agents = [opt['value'] for opt in AGENT_OPTIONS if opt['value'] in default_agent_names]
 

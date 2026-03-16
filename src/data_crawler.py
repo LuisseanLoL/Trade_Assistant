@@ -387,9 +387,30 @@ def calculate_advanced_indicators(df):
     
     return df
 
+def get_intraday_volume_ratio(traded_mins: int) -> float:
+    """基于 A 股经典 U 型成交量分布的经验累积权重"""
+    if traded_mins <= 0:
+        return 0.01
+    elif traded_mins <= 30:
+        # 早盘9:30-10:00：开盘爆量，前30分钟约占全天的28%
+        return 0.28 * (traded_mins / 30)
+    elif traded_mins <= 60:
+        # 10:00-10:30：逐渐平缓，累计约占42%
+        return 0.28 + 0.14 * ((traded_mins - 30) / 30)
+    elif traded_mins <= 120:
+        # 10:30-11:30：上午清淡期，累计约占58%
+        return 0.42 + 0.16 * ((traded_mins - 60) / 60)
+    elif traded_mins <= 180:
+        # 13:00-14:00：下午开盘平淡，累计约占75%
+        return 0.58 + 0.17 * ((traded_mins - 120) / 60)
+    elif traded_mins <= 240:
+        # 14:00-15:00：尾盘抢筹/砸盘放量，补足最后的25%
+        return 0.75 + 0.25 * ((traded_mins - 180) / 60)
+    return 1.0
+
 def get_macro_market_context(current_date: str) -> str:
-    """获取大盘(上证指数)数据并进行量化分析"""
-    print("\n🌍 正在获取并分析宏观大盘(上证指数)数据...")
+    """获取大盘(上证指数)数据并进行量化分析 (含估值、流动性与盘中非线性量能预估)"""
+    print("\n🌍 正在获取并分析宏观大盘(上证指数)与全市场宏观数据...")
     cache_dir = f"log/index_data"
     os.makedirs(cache_dir, exist_ok=True)
     cache_file = os.path.join(cache_dir, f"sh000001_daily_{current_date}.csv")
@@ -417,9 +438,8 @@ def get_macro_market_context(current_date: str) -> str:
     
     latest_date = df_index['date'].iloc[-1].strftime("%Y-%m-%d")
     
-    # 【核心修复】：必须是工作日的 09:30 之后，才允许追加/覆盖当天的实时行情
+    # 必须是工作日的 09:30 之后，才允许追加/覆盖当天的实时行情
     if is_weekday and current_time_str >= "09:30":
-        # 处于盘中，或时间已过 15:05 但历史接口尚未更新出今天的数据时
         if is_trading_time or today_str != latest_date:
             try:
                 spot_df = ak.stock_zh_index_spot_sina()
@@ -427,7 +447,29 @@ def get_macro_market_context(current_date: str) -> str:
                 latest_close = safe_float(sh_spot['最新价'])
                 spot_volume = safe_float(sh_spot['成交量'])
                 
-                # 【核心修复】：必须验证成交量大于0，防止把节假日或开盘前的无效现货数据追加进去
+                # ==================== 核心修复 1：成交量单位对齐 ====================
+                # 新浪实时接口的成交量默认是“手”，而历史接口通常是“股”。
+                if not df_index.empty:
+                    prev_vol = df_index.iloc[-1]['volume']
+                    # 如果发现获取到的实时成交量异常小（小于历史最后一天成交量的1/10），自动乘以100对齐单位
+                    if spot_volume > 0 and spot_volume < (prev_vol / 10):
+                        spot_volume = spot_volume * 100
+                
+                # ==================== 核心修复 2：盘中非线性量能预估 ====================
+                if is_trading_time:
+                    traded_minutes = 0
+                    if "09:30" <= current_time_str <= "11:30":
+                        h, m = map(int, current_time_str.split(':'))
+                        traded_minutes = (h - 9) * 60 + m - 30
+                    elif "13:00" <= current_time_str <= "15:05":
+                        h, m = map(int, current_time_str.split(':'))
+                        traded_minutes = 120 + (h - 13) * 60 + m
+                        
+                    if 0 < traded_minutes < 240:
+                        current_ratio = get_intraday_volume_ratio(traded_minutes)
+                        spot_volume = spot_volume / current_ratio  # 动态放大到全天预估量
+                # =====================================================================
+
                 if latest_close > 0 and spot_volume > 0:
                     new_row = {
                         'date': pd.to_datetime(today_str),
@@ -439,12 +481,10 @@ def get_macro_market_context(current_date: str) -> str:
                     }
                     
                     if latest_date == today_str:
-                        # 最新价如果不一致，更新今天的K线数据
                         if df_index.iloc[-1]['close'] != latest_close:
                             for k, v in new_row.items():
                                 df_index.iloc[-1, df_index.columns.get_loc(k)] = v
                     else:
-                        # 插入今日真实的实时数据作为最新的一条K线
                         df_index = pd.concat([df_index, pd.DataFrame([new_row])], ignore_index=True)
             except Exception as e:
                 print(f"⚠️ 获取大盘实时行情失败(将使用最新历史数据): {e}")
@@ -458,33 +498,104 @@ def get_macro_market_context(current_date: str) -> str:
     processed_index = calculate_advanced_indicators(df_calc)
     latest_idx = processed_index.iloc[-1]
     
-    # 4. 构建宏观上下文文本
-    actual_latest_date = latest_idx['日期'].strftime("%Y-%m-%d")  # 动态获取生效的最后一天日期
+    # 提取基础数据和核心均线
+    actual_latest_date = latest_idx['日期'].strftime("%Y-%m-%d")
     close_val = safe_float(latest_idx['收盘'])
-    ma20_val = safe_float(latest_idx['MA20'])
-    ma60_val = safe_float(latest_idx['MA60'])
-    
-    # 判定大盘趋势状态
-    if close_val > ma20_val and ma20_val > ma60_val:
-        trend = "多头排列 (站上MA20且均线向上)"
-    elif close_val < ma20_val and ma20_val < ma60_val:
-        trend = "空头排列 (跌破MA20且均线向下)"
-    elif close_val > ma20_val:
-        trend = "震荡偏多 (站上MA20)"
-    else:
-        trend = "震荡偏空 (跌破MA20)"
-        
+    ma20_val = safe_float(latest_idx.get('MA20', 0))
+    ma60_val = safe_float(latest_idx.get('MA60', 0))
+    ma120_val = safe_float(latest_idx.get('MA120', 0))
+    ma200_val = safe_float(latest_idx.get('MA200', 0))
     pct_chg = safe_float(latest_idx.get('daily_return', 0)) * 100
     
-    macro_context = (
-        f"上证指数: {close_val:.2f} (数据日期: {actual_latest_date}, 日涨跌幅: {pct_chg:.2f}%)\n"
-        f"大盘趋势: {trend}\n"
-        f"核心均线: MA20={ma20_val:.2f}, MA60={ma60_val:.2f}\n"
-        f"情绪指标(RSI14): {safe_float(latest_idx.get('rsi_14')):.2f} (通常>70超买，<30超卖)\n"
-        f"偏离度(Z-Score): {safe_float(latest_idx.get('z_score')):.2f} (偏离20日均线的标准差，绝对值>2极度偏离)"
-    )
-    return macro_context
+    # 判断短期趋势
+    if close_val > ma20_val and ma20_val > ma60_val:
+        trend = "多头排列 (站上短中期均线)"
+    elif close_val < ma20_val and ma20_val < ma60_val:
+        trend = "空头排列 (跌破短中期均线)"
+    elif close_val > ma20_val:
+        trend = "震荡偏多 (短线站上MA20)"
+    else:
+        trend = "震荡偏空 (短线跌破MA20)"
 
+    # 判断长期牛熊判决线 (200日均线)
+    if close_val > ma200_val:
+        long_trend = "长线位于牛熊分界线(MA200)之上"
+    else:
+        long_trend = "长线位于牛熊分界线(MA200)之下，处于战略防守期"
+
+    # ==================== 新增宏观数据拉取 ====================
+
+    # 4. 获取 A 股等权重与中位数市盈率 (估值与钟摆定位)
+    pe_str = "A股整体估值获取失败"
+    try:
+        pe_df = ak.stock_a_ttm_lyr()
+        if not pe_df.empty:
+            pe_df['date'] = pd.to_datetime(pe_df['date'])
+            pe_df = pe_df.sort_values('date')
+            latest_pe = pe_df.iloc[-1]
+            
+            mid_pe = float(latest_pe['middlePETTM'])
+            pe_rank = float(latest_pe['quantileInRecent10YearsMiddlePeTtm']) * 100
+            
+            # 定位钟摆位置
+            if pe_rank <= 20: pe_status = "极度低估(左侧击球区)"
+            elif pe_rank <= 40: pe_status = "偏低估(安全区)"
+            elif pe_rank >= 90: pe_status = "极度高估(泡沫警戒区)"
+            elif pe_rank >= 60: pe_status = "偏高估(风险区)"
+            else: pe_status = "估值中枢(中性区)"
+            
+            pe_str = f"A股中位数PE(TTM): {mid_pe:.2f} (处于近10年 {pe_rank:.2f}% 分位, {pe_status})"
+    except Exception as e:
+        print(f"⚠️ A股PE获取失败: {e}")
+
+    # 5. 获取十年期国债收益率 (流动性周期)
+    bond_str = "国债收益率获取失败"
+    try:
+        bond_df = ak.bond_gb_zh_sina(symbol="中国10年期国债")
+        if not bond_df.empty:
+            latest_bond = bond_df.iloc[-1]
+            yield_val = float(latest_bond['close'])
+            
+            if yield_val < 2.5: liq_status = "极度宽松 (利好权益资产Beta)"
+            elif yield_val < 2.8: liq_status = "宽松偏多"
+            elif yield_val > 3.2: liq_status = "紧缩承压 (利空权益资产估值)"
+            else: liq_status = "中性稳定"
+            
+            bond_str = f"十年期国债收益率: {yield_val:.3f}% ({liq_status})"
+    except Exception as e:
+        print(f"⚠️ 国债收益率获取失败: {e}")
+
+    # ==================== 量能放大对比测算 ====================
+    vol_current = safe_float(latest_idx.get('成交量', 0))
+    vol_ma5 = safe_float(latest_idx.get('volume_ma5', 0))
+    if vol_ma5 > 0:
+        vol_ratio = vol_current / vol_ma5
+        if vol_ratio >= 1.2:
+            vol_status = f"显著放量 (预估全天较5日均量增量 +{(vol_ratio-1)*100:.1f}%)"
+        elif vol_ratio <= 0.8:
+            vol_status = f"显著缩量 (预估全天较5日均量缩量 -{(1-vol_ratio)*100:.1f}%)"
+        else:
+            vol_status = f"平量震荡 (预估全天约为5日均量的 {vol_ratio*100:.1f}%)"
+    else:
+        vol_status = "量能数据缺失"
+
+    # ==================== 组合输出 ====================
+    rsi14 = safe_float(latest_idx.get('rsi_14', 50))
+    z_score = safe_float(latest_idx.get('z_score', 0))
+    
+    rsi_status = "超买极值" if rsi14 > 70 else ("超卖极值" if rsi14 < 30 else "中性区间")
+    z_status = "逼近布林带上轨" if z_score > 2 else ("逼近布林带下轨" if z_score < -2 else "轨内正常运行")
+
+    macro_context = (
+        f"1. 基础行情: 上证指数 {close_val:.2f} (数据日期: {actual_latest_date}, 日涨跌幅: {pct_chg:.2f}%)\n"
+        f"2. 趋势与量能: 短期{trend}；大盘量能呈现{vol_status}。\n"
+        f"3. 核心均线: MA20={ma20_val:.2f}, MA60={ma60_val:.2f}, MA120={ma120_val:.2f}, MA200={ma200_val:.2f} ({long_trend})\n"
+        f"4. 估值与钟摆: {pe_str}\n"
+        f"5. 宏观与流动性: {bond_str}\n"
+        f"6. 情绪与极值: RSI14={rsi14:.2f} ({rsi_status}); 偏离度(Z-Score)={z_score:.2f} ({z_status})"
+    )
+    
+    return macro_context
 
 def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     """
