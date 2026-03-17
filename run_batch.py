@@ -199,26 +199,41 @@ def main():
                 df = pd.read_csv(RANDOM_CSV_PATH, dtype=str)
                 all_codes = df[COLUMN_NAME].astype(str).str.strip().tolist()
                 
-                daily_table_path = f"output/{current_date_str}/Daily Table_{current_date_str}.csv"
+                # 🌟 新增逻辑：往前推 7 天，读取所有已处理过的 Daily Table 记录
                 processed_codes = set()
+                days_to_check = 7
                 
-                if os.path.exists(daily_table_path):
-                    try:
-                        df_daily = pd.read_csv(daily_table_path, dtype={'股票代码': str})
-                        processed_codes = set(df_daily['股票代码'].astype(str).str.strip())
-                        print(f"🔍 发现今日({current_date_str})已处理记录 {len(processed_codes)} 条，将在随机抽取时予以剔除。")
-                    except Exception as e:
-                        print(f"⚠️ 读取今日 Daily Table 失败: {e}")
+                print(f"\n🔍 正在扫描近 {days_to_check} 天的运行记录，以剔除近期已处理标的...")
+                for i in range(days_to_check):
+                    check_date = current_date - timedelta(days=i)
+                    check_date_str = check_date.strftime("%Y-%m-%d")
+                    daily_table_path = f"output/{check_date_str}/Daily Table_{check_date_str}.csv"
+                    
+                    if os.path.exists(daily_table_path):
+                        try:
+                            df_daily = pd.read_csv(daily_table_path, dtype={'股票代码': str})
+                            codes_in_file = set(df_daily['股票代码'].astype(str).str.strip())
+                            processed_codes.update(codes_in_file)
+                            # 可选：如果你想看到每一天具体排除了多少个，可以取消下面这行的注释
+                            # print(f"  - 找到 {check_date_str} 的记录，包含 {len(codes_in_file)} 只股票")
+                        except Exception as e:
+                            print(f"⚠️ 读取 {check_date_str} 的 Daily Table 失败: {e}")
                 
+                if processed_codes:
+                    print(f"✅ 成功提取近 {days_to_check} 天的历史记录，共排除了 {len(processed_codes)} 只不重复的股票。")
+                else:
+                    print("ℹ️ 未发现近期的历史处理记录。")
+                
+                # 将近一周已处理过的股票从全量股票池中剔除
                 all_codes = [c for c in all_codes if c not in processed_codes]
 
                 if not all_codes:
-                    print("⚠️ 全量股票池中的所有股票今日均已处理完毕！")
+                    print("⚠️ 全量股票池中的所有股票在近期均已处理完毕！")
                     return
 
                 actual_sample_size = min(SAMPLE_SIZE, len(all_codes))
                 batch = random.sample(all_codes, actual_sample_size)
-                print(f"🎲 [随机模式] 成功从全市场池中抽取了 {actual_sample_size} 只未处理过的标的。")
+                print(f"🎲 [随机模式] 成功从全市场池中抽取了 {actual_sample_size} 只近期未处理过的标的。")
             except Exception as e:
                 print(f"❌ 读取随机股票池失败: {e}。自动回退到指定股票池模式。")
                 batch = SPECIFIC_BATCH

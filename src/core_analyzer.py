@@ -156,7 +156,7 @@ def run_core_analysis(
                 except Exception as e:
                     return f"该大师 ({agent_name}) 分析失败：{e}"
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(committee_agents)) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
                 futures = {executor.submit(agent_task, agent_name): agent_name for agent_name in committee_agents}
                 for future in concurrent.futures.as_completed(futures):
                     agent_name = futures[future]
