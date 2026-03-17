@@ -23,7 +23,6 @@ def get_bs_code(symbol: str) -> str:
     elif symbol.startswith('8') or symbol.startswith('4'): return f"bj.{symbol}"
     return symbol
 
-# ========== 新增拆分出来的函数 ==========
 def get_stock_name_bs(stock_code):
     """获取股票名称 (支持在外部统一控制连接，兼容独立调用)"""
     bs_code = get_bs_code(stock_code)
@@ -54,7 +53,6 @@ def get_chart_data(stock_code, beg, end):
     fields = "date,open,high,low,close,volume"
     rs = bs.query_history_k_data_plus(bs_code, fields, start_date=bs_start, end_date=bs_end, frequency="d", adjustflag="2")
     
-    # 兼容前端单独调用的智能检测
     need_logout = False
     if rs.error_code != '0' and "login" in str(rs.error_msg).lower():
         bs.login()
@@ -76,7 +74,7 @@ def get_chart_data(stock_code, beg, end):
     return df
 
 def get_30m_chart_data(stock_code, beg, end):
-    """获取 30 分钟 K 线数据 (支持在外部统一控制连接，兼容独立调用)"""
+    """获取 30 分钟 K 线数据"""
     bs_code = get_bs_code(stock_code)
     bs_start = f"{beg[:4]}-{beg[4:6]}-{beg[6:]}"
     bs_end = f"{end[:4]}-{end[4:6]}-{end[6:]}"
@@ -84,7 +82,6 @@ def get_30m_chart_data(stock_code, beg, end):
     fields = "date,time,code,open,high,low,close,volume,amount,adjustflag"
     rs = bs.query_history_k_data_plus(bs_code, fields, start_date=bs_start, end_date=bs_end, frequency="30", adjustflag="2")
     
-    # 兼容前端单独调用的智能检测
     need_logout = False
     if rs.error_code != '0' and "login" in str(rs.error_msg).lower():
         bs.login()
@@ -106,7 +103,6 @@ def get_30m_chart_data(stock_code, beg, end):
     return df
 
 def get_xq_symbol(symbol: str) -> str:
-    """将股票代码转换为雪球需要的格式 (如: 600000 -> SH600000)"""
     if symbol.startswith('6'): return f"SH{symbol}"
     elif symbol.startswith('0') or symbol.startswith('3'): return f"SZ{symbol}"
     elif symbol.startswith('8') or symbol.startswith('4'): return f"BJ{symbol}"
@@ -127,25 +123,17 @@ def get_xueqiu_dividend_yield(symbol: str) -> str:
                 viewport={"width": 1920, "height": 1080}
             )
             page = context.new_page()
-            # 隐藏 webdriver 特征，防反爬
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
-            # 随机休眠防反爬
             time.sleep(random.uniform(1.5, 3.5))
-            
             page.goto(url, wait_until="domcontentloaded", timeout=45000)
-            
-            # 等待 body 渲染完毕，留一点缓冲时间让 JS 加载报价表格
             page.wait_for_selector('body', timeout=15000)
             time.sleep(random.uniform(1.0, 2.0)) 
             
             html = page.content()
             soup = BeautifulSoup(html, 'html.parser')
-            
-            # 将所有文本拼接到一起，然后用正则精确提取
             text_content = soup.get_text(separator=' ', strip=True)
             
-            # 匹配 "股息率(TTM): 3.66%" 或无数据时的 "--"
             match = re.search(r'股息率\(TTM\)[\s:：]*([0-9\.]+%|--)', text_content)
             if match:
                 dividend_yield = match.group(1)
@@ -173,20 +161,16 @@ def get_ths_fund_flow(stock_code: str) -> pd.DataFrame:
                 viewport={"width": 1920, "height": 1080}
             )
             page = context.new_page()
-            # 隐藏 webdriver 特征，防反爬
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
             time.sleep(random.uniform(1.0, 3.0))
             page.goto(url, wait_until="domcontentloaded", timeout=45000)
-            
-            # 等待表格加载，同花顺数据有时是异步渲染的
             page.wait_for_selector('table', timeout=15000)
             time.sleep(random.uniform(1.5, 2.5)) 
             
             html = page.content()
             soup = BeautifulSoup(html, 'html.parser')
             
-            # 寻找表头包含 "5日主力净额" 的目标表格
             target_table = None
             for table in soup.find_all('table'):
                 if '5日主力净额' in table.get_text() and '大单(主力)' in table.get_text():
@@ -198,7 +182,6 @@ def get_ths_fund_flow(stock_code: str) -> pd.DataFrame:
                 if tbody:
                     for tr in tbody.find_all('tr'):
                         tds = tr.find_all('td')
-                        # 表格标准数据行应有 11 列
                         if len(tds) >= 11:
                             row = [td.get_text(strip=True) for td in tds]
                             fund_data.append(row)
@@ -208,43 +191,29 @@ def get_ths_fund_flow(stock_code: str) -> pd.DataFrame:
         print(f"❌ 获取同花顺资金数据失败: {e}")
         
     if fund_data:
-        # 定义列名，与网页表格列对应
         columns = ['日期', '收盘价', '涨跌幅', '资金净流入', '5日主力净额', '大单净额', '大单净占比', '中单净额', '中单净占比', '小单净额', '小单净占比']
         df = pd.DataFrame(fund_data, columns=columns)
-        
-        # 格式化日期以便与 k_df 对齐：20260312 -> 2026-03-12
         df['date'] = df['日期'].apply(lambda x: f"{x[:4]}-{x[4:6]}-{x[6:8]}" if len(x) == 8 else x)
         
-        # 提取需要的资金特征列
         cols_to_keep = ['date', '资金净流入', '5日主力净额', '大单净额', '大单净占比', '中单净额', '中单净占比', '小单净额', '小单净占比']
         df = df[cols_to_keep].copy()
         
-        # 将带有百分号和逗号的字符串转换为浮点数
         for col in cols_to_keep[1:]:
             df[col] = df[col].str.replace('%', '').str.replace(',', '').apply(safe_float)
             
         return df
-        
-    # 获取失败时返回空 DataFrame
     return pd.DataFrame()
 
-# ========================================
-
 def safe_float(val, default=0.0):
-    """安全地将字符串转换为浮点数"""
     try:
-        if val == "" or pd.isna(val) or val is None:
-            return default
-        if isinstance(val, str):
-            val = val.replace('—', '-').replace('%', '').replace(',', '')
+        if val == "" or pd.isna(val) or val is None: return default
+        if isinstance(val, str): val = val.replace('—', '-').replace('%', '').replace(',', '')
         return float(val)
     except:
         return default
 
 def parse_chinese_number(val):
-    """解析带有 '亿', '万' 等中文单位的数字字符串"""
-    if pd.isna(val) or val == '-' or val == '':
-        return np.nan
+    if pd.isna(val) or val == '-' or val == '': return np.nan
     val = str(val).replace(',', '')
     multiplier = 1
     if '亿' in val:
@@ -259,22 +228,16 @@ def parse_chinese_number(val):
         return np.nan
     
 def format_large_number(num):
-    """将大数字格式化为亿、万为单位的字符串"""
     try:
         num = float(num)
-        if pd.isna(num) or num == 0.0:
-            return "0.0"
-        if abs(num) >= 1e8:
-            return f"{num / 1e8:.2f}亿"
-        elif abs(num) >= 1e4:
-            return f"{num / 1e4:.2f}万"
-        else:
-            return f"{num:.2f}"
+        if pd.isna(num) or num == 0.0: return "0.0"
+        if abs(num) >= 1e8: return f"{num / 1e8:.2f}亿"
+        elif abs(num) >= 1e4: return f"{num / 1e4:.2f}万"
+        else: return f"{num:.2f}"
     except:
         return str(num)
 
 def calculate_hurst(series):
-    """计算赫斯特指数 (Hurst Exponent) 以判断时间序列的平稳性/趋势性"""
     try:
         series = series.dropna()
         if len(series) < 30: return np.nan
@@ -288,11 +251,9 @@ def calculate_hurst(series):
 def calculate_advanced_indicators(df):
     """计算高级技术指标与量化信号."""
     df = df.sort_values('日期').reset_index(drop=True)
-    
-    # 基础收益率
     df['daily_return'] = df['收盘'].pct_change()
     
-    # ---------------- 极值与分位点计算 ----------------
+    # 极值与分位点
     df['high_4w'] = df['最高'].rolling(20).max()
     df['low_4w'] = df['最低'].rolling(20).min()
     df['high_13w'] = df['最高'].rolling(65).max()
@@ -300,22 +261,15 @@ def calculate_advanced_indicators(df):
     df['high_52w'] = df['最高'].rolling(250).max()
     df['low_52w'] = df['最低'].rolling(250).min()
 
-    # 估值历史分位计算优化：解决PE跨越0时的数学不连续性陷阱
     if 'peTTM' in df.columns:
-        # 将PE转换为EP (Earnings Yield)
-        # 注意处理 PE 为 0 的极端异常情况，防止除以0
         df['ep'] = np.where(df['peTTM'] == 0, np.nan, 1 / df['peTTM'])
-        
-        # EP越大代表越便宜/基本面越好。
-        # 为了符合大家看PE分位“数值越小越便宜”的习惯，我们对 -EP 进行升序排列
         df['pe_rank'] = (-df['ep']).rank(pct=True) * 100
 
     if 'pbMRQ' in df.columns:
-        # 净资产(PB)很少为负，即使为负(资不抵债)，倒数法(BP = 1/PB)同样适用
         df['bp'] = np.where(df['pbMRQ'] == 0, np.nan, 1 / df['pbMRQ'])
         df['pb_rank'] = (-df['bp']).rank(pct=True) * 100
 
-    # ---------------- 动量计算 (Momentum) ----------------
+    # 动量
     df['momentum_1m'] = df['收盘'].pct_change(periods=20)
     df['momentum_3m'] = df['收盘'].pct_change(periods=60)
     df['momentum_6m'] = df['收盘'].pct_change(periods=120)
@@ -323,7 +277,7 @@ def calculate_advanced_indicators(df):
     df['volume_ma20'] = df['成交量'].rolling(20).mean()
     df['volume_momentum'] = df['volume_ma5'] / df['volume_ma20'].replace(0, np.nan)
     
-    # ---------------- 基础移动平均 ----------------
+    # 移动平均
     df['MA5'] = df['收盘'].rolling(window=5).mean()
     df['MA10'] = df['收盘'].rolling(window=10).mean()
     df['MA20'] = df['收盘'].rolling(window=20).mean()
@@ -331,14 +285,14 @@ def calculate_advanced_indicators(df):
     df['MA120'] = df['收盘'].rolling(window=120).mean()
     df['MA200'] = df['收盘'].rolling(window=200).mean()
 
-    # ---------------- MACD ----------------
+    # MACD
     df['EMA12'] = df['收盘'].ewm(span=12, adjust=False).mean()
     df['EMA26'] = df['收盘'].ewm(span=26, adjust=False).mean()
     df['DIF'] = df['EMA12'] - df['EMA26']
     df['DEA'] = df['DIF'].ewm(span=9, adjust=False).mean()
     df['MACD'] = 2 * (df['DIF'] - df['DEA'])
 
-    # ---------------- 趋势跟随 (Trend Following - ADX) ----------------
+    # 趋势跟随
     df['tr0'] = abs(df['最高'] - df['最低'])
     df['tr1'] = abs(df['最高'] - df['收盘'].shift())
     df['tr2'] = abs(df['最低'] - df['收盘'].shift())
@@ -353,12 +307,15 @@ def calculate_advanced_indicators(df):
     df['dx'] = 100 * abs(df['+di'] - df['-di']) / (df['+di'] + df['-di']).replace(0, np.nan)
     df['adx'] = df['dx'].rolling(14).mean()
 
-    # ---------------- 均值回归 (Mean Reversion - Bollinger & RSI) ----------------
+    # 均值回归 (Bollinger & RSI)
     df['std20'] = df['收盘'].rolling(20).std()
     df['upper_bb'] = df['MA20'] + 2 * df['std20']
     df['lower_bb'] = df['MA20'] - 2 * df['std20']
     df['z_score'] = (df['收盘'] - df['MA20']) / df['std20'].replace(0, np.nan)
-    df['price_vs_bb'] = ((df['收盘'] - df['lower_bb']) / (df['upper_bb'] - df['lower_bb']).replace(0, np.nan)) - 0.5
+    
+    # 【核心新增】布林极限 %b 与 带宽 Bandwidth
+    df['bb_pct_b'] = (df['收盘'] - df['lower_bb']) / (df['upper_bb'] - df['lower_bb']).replace(0, np.nan)
+    df['bb_width'] = (df['upper_bb'] - df['lower_bb']) / df['MA20'].replace(0, np.nan)
     
     delta = df['收盘'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
@@ -371,7 +328,7 @@ def calculate_advanced_indicators(df):
     rs28 = gain28 / loss28.replace(0, np.nan)
     df['rsi_28'] = 100 - (100 / (1 + rs28))
 
-    # ---------------- 波动率测算 (Volatility) ----------------
+    # 波动率测算
     df['historical_volatility'] = df['daily_return'].rolling(20).std() * np.sqrt(252)
     vol_120 = df['daily_return'].rolling(120).std() * np.sqrt(252)
     vol_120_min = vol_120.rolling(120).min()
@@ -380,7 +337,7 @@ def calculate_advanced_indicators(df):
     df['volatility_z_score'] = (df['historical_volatility'] - vol_120.rolling(120).mean()) / vol_120.rolling(120).std().replace(0, np.nan)
     df['atr_ratio'] = df['atr14'] / df['收盘']
 
-    # ---------------- 统计套利 (Statistical Arbitrage) ----------------
+    # 统计套利
     df['skewness'] = df['daily_return'].rolling(20).skew()
     df['kurtosis'] = df['daily_return'].rolling(20).kurt()
     df['hurst_exponent'] = df['收盘'].rolling(120).apply(calculate_hurst, raw=False)
@@ -389,23 +346,12 @@ def calculate_advanced_indicators(df):
 
 def get_intraday_volume_ratio(traded_mins: int) -> float:
     """基于 A 股经典 U 型成交量分布的经验累积权重"""
-    if traded_mins <= 0:
-        return 0.01
-    elif traded_mins <= 30:
-        # 早盘9:30-10:00：开盘爆量，前30分钟约占全天的28%
-        return 0.28 * (traded_mins / 30)
-    elif traded_mins <= 60:
-        # 10:00-10:30：逐渐平缓，累计约占42%
-        return 0.28 + 0.14 * ((traded_mins - 30) / 30)
-    elif traded_mins <= 120:
-        # 10:30-11:30：上午清淡期，累计约占58%
-        return 0.42 + 0.16 * ((traded_mins - 60) / 60)
-    elif traded_mins <= 180:
-        # 13:00-14:00：下午开盘平淡，累计约占75%
-        return 0.58 + 0.17 * ((traded_mins - 120) / 60)
-    elif traded_mins <= 240:
-        # 14:00-15:00：尾盘抢筹/砸盘放量，补足最后的25%
-        return 0.75 + 0.25 * ((traded_mins - 180) / 60)
+    if traded_mins <= 0: return 0.01
+    elif traded_mins <= 30: return 0.28 * (traded_mins / 30)
+    elif traded_mins <= 60: return 0.28 + 0.14 * ((traded_mins - 30) / 30)
+    elif traded_mins <= 120: return 0.42 + 0.16 * ((traded_mins - 60) / 60)
+    elif traded_mins <= 180: return 0.58 + 0.17 * ((traded_mins - 120) / 60)
+    elif traded_mins <= 240: return 0.75 + 0.25 * ((traded_mins - 180) / 60)
     return 1.0
 
 def get_macro_market_context(current_date: str) -> str:
@@ -413,7 +359,6 @@ def get_macro_market_context(current_date: str) -> str:
     cache_dir = f"log/index_data"
     os.makedirs(cache_dir, exist_ok=True)
     
-    # 宏观环境文本缓存文件
     macro_text_cache_file = os.path.join(cache_dir, f"macro_context_text_{current_date}.txt")
     
     now = datetime.now()
@@ -422,20 +367,15 @@ def get_macro_market_context(current_date: str) -> str:
     current_time_str = now.strftime("%H:%M")
     is_trading_time = "09:30" <= current_time_str <= "15:05"
 
-    # ==================== 🌟 核心新增：盘后/周末免拉取缓存机制 ====================
     # 如果当前不在交易时间，且今天的宏观文本缓存已存在，直接读取返回
     if not is_trading_time and os.path.exists(macro_text_cache_file):
         print("\n🌍 📦 检测到宏观大盘环境文本缓存已存在，直接读取跳过计算...")
         with open(macro_text_cache_file, 'r', encoding='utf-8') as f:
             return f.read()
-    # ==============================================================================
 
     print("\n🌍 正在获取并分析宏观大盘(上证指数)与全市场宏观数据...")
-    
-    # K线历史数据缓存文件
     cache_file = os.path.join(cache_dir, f"sh000001_daily_{current_date}.csv")
     
-    # 1. 加载历史数据并缓存 (每天只全量拉一次历史)
     if os.path.exists(cache_file):
         df_index = pd.read_csv(cache_file)
         df_index['date'] = pd.to_datetime(df_index['date'])
@@ -447,11 +387,11 @@ def get_macro_market_context(current_date: str) -> str:
         except Exception as e:
             print(f"❌ 获取大盘历史数据失败: {e}")
             return "大盘数据获取失败，宏观环境未知。"
-    
+            
     latest_date = df_index['date'].iloc[-1].strftime("%Y-%m-%d") if not df_index.empty else ""
-    is_estimating = False  # 初始化预估状态标识
+    is_estimating = False 
     
-    # 2. 盘中实时行情追加与修正
+    # 盘中实时行情追加与修正
     if is_weekday and current_time_str >= "09:30":
         if is_trading_time or today_str != latest_date:
             try:
@@ -460,13 +400,13 @@ def get_macro_market_context(current_date: str) -> str:
                 latest_close = safe_float(sh_spot['最新价'])
                 spot_volume = safe_float(sh_spot['成交量'])
                 
-                # 修复1：成交量单位对齐 (手转股)
+                # 成交量单位对齐 (手转股)
                 if not df_index.empty:
                     prev_vol = df_index.iloc[-1]['volume']
                     if spot_volume > 0 and spot_volume < (prev_vol / 10):
                         spot_volume = spot_volume * 100
                 
-                # 修复2：盘中非线性量能预估
+                # 盘中非线性量能预估
                 if is_trading_time:
                     traded_minutes = 0
                     if "09:30" <= current_time_str <= "11:30":
@@ -479,7 +419,7 @@ def get_macro_market_context(current_date: str) -> str:
                     if 0 < traded_minutes < 240:
                         current_ratio = get_intraday_volume_ratio(traded_minutes)
                         spot_volume = spot_volume / current_ratio  
-                        is_estimating = True  # 👈 成功触发预估机制
+                        is_estimating = True  
                 
                 if latest_close > 0 and spot_volume > 0:
                     new_row = {
@@ -500,7 +440,7 @@ def get_macro_market_context(current_date: str) -> str:
             except Exception as e:
                 print(f"⚠️ 获取大盘实时行情失败(将使用最新历史数据): {e}")
 
-    # 3. 计算大盘技术指标
+    # 计算大盘技术指标
     df_calc = df_index.copy()
     df_calc = df_calc.rename(columns={'date': '日期', 'open': '开盘', 'high': '最高', 'low': '最低', 'close': '收盘', 'volume': '成交量'})
     for col in ['开盘', '最高', '最低', '收盘', '成交量']:
@@ -525,7 +465,7 @@ def get_macro_market_context(current_date: str) -> str:
 
     long_trend = "长线位于牛熊分界线(MA200)之上" if close_val > ma200_val else "长线位于牛熊分界线(MA200)之下，处于战略防守期"
 
-    # 4. 获取 A 股等权重与中位数市盈率 
+    # 获取 A 股等权重与中位数市盈率 
     pe_str = "A股整体估值获取失败"
     try:
         pe_df = ak.stock_a_ttm_lyr()
@@ -539,7 +479,7 @@ def get_macro_market_context(current_date: str) -> str:
             
             if pe_rank <= 20: pe_status = "极度低估(左侧击球区)"
             elif pe_rank <= 40: pe_status = "偏低估(安全区)"
-            elif pe_rank >= 80: pe_status = "极度高估(泡沫警戒区)"
+            elif pe_rank >= 90: pe_status = "极度高估(泡沫警戒区)"
             elif pe_rank >= 60: pe_status = "偏高估(风险区)"
             else: pe_status = "估值中枢(中性区)"
             
@@ -547,7 +487,7 @@ def get_macro_market_context(current_date: str) -> str:
     except Exception as e:
         print(f"⚠️ A股PE获取失败: {e}")
 
-    # 5. 获取十年期国债收益率 
+    # 获取十年期国债收益率 
     bond_str = "国债收益率获取失败"
     try:
         bond_df = ak.bond_gb_zh_sina(symbol="中国10年期国债")
@@ -564,7 +504,7 @@ def get_macro_market_context(current_date: str) -> str:
     except Exception as e:
         print(f"⚠️ 国债收益率获取失败: {e}")
 
-    # 6. 量能放大对比测算 
+    # 量能放大对比测算 
     vol_current = safe_float(latest_idx.get('成交量', 0))
     vol_ma5 = safe_float(latest_idx.get('volume_ma5', 0))
     prefix_text = "预估全天" if is_estimating else "实际"
@@ -577,11 +517,23 @@ def get_macro_market_context(current_date: str) -> str:
     else:
         vol_status = "量能数据缺失"
 
-    # 7. 组合输出 
+    # 组合输出 (新增布林极值与带宽)
     rsi14 = safe_float(latest_idx.get('rsi_14', 50))
     z_score = safe_float(latest_idx.get('z_score', 0))
+    bb_pct_b = safe_float(latest_idx.get('bb_pct_b', 0.5))
+    bb_width = safe_float(latest_idx.get('bb_width', 0))
+    
     rsi_status = "超买极值" if rsi14 > 70 else ("超卖极值" if rsi14 < 30 else "中性区间")
-    z_status = "逼近布林带上轨" if z_score > 2 else ("逼近布林带下轨" if z_score < -2 else "轨内正常运行")
+    
+    if bb_pct_b >= 1.0: bb_status = "突破上轨 (超买/极强动量)"
+    elif bb_pct_b <= 0.0: bb_status = "跌破下轨 (超卖/极度恐慌)"
+    elif bb_pct_b >= 0.8: bb_status = "逼近上轨 (压力区)"
+    elif bb_pct_b <= 0.2: bb_status = "逼近下轨 (支撑区)"
+    else: bb_status = "通道内震荡"
+
+    if bb_width < 0.05: width_status = "喇叭口极度收敛 (面临重大变盘)"
+    elif bb_width > 0.10: width_status = "喇叭口敞开 (高波动趋势发散)"
+    else: width_status = "带宽正常"
 
     macro_context = (
         f"1. 基础行情: 上证指数 {close_val:.2f} (数据日期: {actual_latest_date}, 日涨跌幅: {pct_chg:.2f}%)\n"
@@ -589,36 +541,26 @@ def get_macro_market_context(current_date: str) -> str:
         f"3. 核心均线: MA20={ma20_val:.2f}, MA60={ma60_val:.2f}, MA120={ma120_val:.2f}, MA200={ma200_val:.2f} ({long_trend})\n"
         f"4. 估值与钟摆: {pe_str}\n"
         f"5. 宏观与流动性: {bond_str}\n"
-        f"6. 情绪与极值: RSI14={rsi14:.2f} ({rsi_status}); 偏离度(Z-Score)={z_score:.2f} ({z_status})"
+        f"6. 情绪与通道: RSI14={rsi14:.2f} ({rsi_status}); 布林极限%b={bb_pct_b:.2f} ({bb_status}), 布林带宽={bb_width*100:.2f}% ({width_status})"
     )
     
-    # ==================== 🌟 核心新增：盘后写入缓存 ====================
-    # 如果不是在盘中预估阶段，说明获取的是完整定局数据，保存为文本缓存
+    # 盘后写入缓存
     if not is_estimating:
         try:
             with open(macro_text_cache_file, 'w', encoding='utf-8') as f:
                 f.write(macro_context)
         except Exception as e:
             print(f"⚠️ 宏观文本缓存写入失败: {e}")
-    # ====================================================================
 
     return macro_context
 
 def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
-    """
-    获取股票历史数据, 计算技术指标, 并保存为CSV文件 
-    (行情基于 Baostock，财务基于新浪，机构预测基于同花顺)
-    注：需要在外部统一切换 bs.login() 和 bs.logout() 控制连接。
-    """
     now = datetime.now()
     is_weekend = now.weekday() >= 5
     data_dir = f"log/stock_data/{current_date}"
     os.makedirs(data_dir, exist_ok=True)
     
-    # =========================================================================
-    # 🌟 核心新增：周末/已有数据缓存免拉取机制
-    # =========================================================================
-    # 如果是周末且财务及历史数据文本已生成，直接读取缓存跳过所有接口调用
+    # 周末免拉取缓存机制
     cache_file_path = os.path.join(data_dir, f"{stock_code}_full_metrics_cache.txt")
     if is_weekend and os.path.exists(cache_file_path):
         print(f"📦 周末免更新机制触发：检测到 {stock_code} 行情与财务数据已存在，直接读取...")
@@ -635,7 +577,7 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     except:
         end_dt = datetime.now()
         
-    start_dt = end_dt - timedelta(days=1095) # 前推3年
+    start_dt = end_dt - timedelta(days=1095)
     long_beg_date = start_dt.strftime("%Y-%m-%d")
     end_date_str = end_dt.strftime("%Y-%m-%d")
 
@@ -650,7 +592,7 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     if rs_ind.error_code == '0' and rs_ind.next():
         industry = rs_ind.get_row_data()[3]
 
-    # 2. 获取 K线 行情数据与估值指标切片 (Baostock 前复权，长周期)
+    # 2. 获取行情
     fields = "date,open,high,low,close,volume,amount,turn,pctChg,peTTM,pbMRQ,psTTM"
     rs_k = bs.query_history_k_data_plus(bs_code, fields, start_date=long_beg_date, end_date=end_date_str, frequency="d", adjustflag="2")
     
@@ -660,14 +602,10 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
         
     k_df = pd.DataFrame(k_data_list, columns=fields.split(','))
     
-    # =========================================================================
-    # 🚀 核心新增：工作日盘中实时行情修补验证 (防止重复数据)
-    # =========================================================================
     today_str = now.strftime("%Y-%m-%d")
     current_time_str = now.strftime("%H:%M")
     latest_bs_date = k_df['date'].iloc[-1] if not k_df.empty else ""
 
-    # 仅工作日上午9:30后、下午18:00前，且历史数据中尚未包含今天数据时调用
     if not is_weekend and "09:30" <= current_time_str <= "18:00" and latest_bs_date != today_str:
         try:
             print(f"⚡ 正在调用 SinaRealtime 接口获取 {stock_code} 今日行情...")
@@ -677,13 +615,11 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
             if not spot_df.empty:
                 spot_data = spot_df.iloc[0]
                 latest_close = safe_float(spot_data['close'])
-                spot_volume = safe_float(spot_data['vol']) # 直接取股数
+                spot_volume = safe_float(spot_data['vol'])
                 prev_close = safe_float(spot_data['prev_close'])
                 
-                # 手动计算涨跌幅
                 pct_chg = 0.0
-                if prev_close > 0:
-                    pct_chg = (latest_close - prev_close) / prev_close * 100.0
+                if prev_close > 0: pct_chg = (latest_close - prev_close) / prev_close * 100.0
 
                 if latest_close > 0 and spot_volume > 0:
                     new_row = {
@@ -704,31 +640,24 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
                     print(f"✅ 个股今日实时行情修补成功！当前计算最新价: {latest_close}")
         except Exception as e:
             print(f"⚠️ 个股实时行情修补失败(将使用最新历史数据): {e}")
-    # =========================================================================
 
-    # 格式化兼容计算函数
     k_df_calc = k_df.copy()
     k_df_calc = k_df_calc.rename(columns={'date': '日期', 'open': '开盘', 'high': '最高', 'low': '最低', 'close': '收盘', 'volume': '成交量'})
     for col in ['开盘', '最高', '最低', '收盘', '成交量', 'peTTM', 'pbMRQ']:
         k_df_calc[col] = pd.to_numeric(k_df_calc[col], errors='coerce')
 
-    # 执行高级指标计算
     processed_data = calculate_advanced_indicators(k_df_calc)
 
-    # 截取用户指定周期以内的数据进行保存
     req_beg_date = f"{beg[:4]}-{beg[4:6]}-{beg[6:]}"
     save_data = processed_data[processed_data['日期'] >= req_beg_date]
 
-    # 保存文件
     safe_stock_name = re.sub(r'[\\/*?:"<>|]', '', stock_name)
     filename_data = f"{stock_code}_{safe_stock_name}_data_{current_date}.csv"
     filepath_data = os.path.join(data_dir, filename_data)
     save_data.to_csv(filepath_data, index=False)
     print(f"行情数据文件已保存至: {filepath_data}")
 
-    # 获取最新一天的行情切片
     latest_row = processed_data.iloc[-1]
-    
     latest_close = safe_float(latest_row['收盘'])
     turnover_rate = safe_float(k_df.iloc[-1]['turn'])
     pct_change = safe_float(k_df.iloc[-1]['pctChg'])
@@ -737,21 +666,15 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     pb_mrq = safe_float(latest_row['pbMRQ'])
     ps_ttm = safe_float(k_df.iloc[-1]['psTTM'])
 
-    if turnover_rate > 0:
-        market_cap = (volume_shares / (turnover_rate / 100)) * latest_close
-    else:
-        market_cap = 0.0
+    market_cap = (volume_shares / (turnover_rate / 100)) * latest_close if turnover_rate > 0 else 0.0
 
-    # 3. 抓取新浪财务数据 & 同花顺机构预测
+    # 3. 抓取财务预测等
     try:
         fin_df = ak.stock_financial_abstract(symbol=stock_code)
         latest_report_date = fin_df.columns[2]
         def get_fin_metric(indicator_name):
-            try:
-                val = fin_df.loc[fin_df['指标'] == indicator_name, latest_report_date].values[0]
-                return safe_float(val)
-            except:
-                return 0.0
+            try: return safe_float(fin_df.loc[fin_df['指标'] == indicator_name, latest_report_date].values[0])
+            except: return 0.0
     except:
         latest_report_date = "无数据"
         def get_fin_metric(indicator_name): return 0.0
@@ -784,7 +707,6 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     except:
         forecast_metrics['机构预测'] = '接口获取失败'
 
-    # ---------------- 抓取雪球股息率 ----------------
     dividend_yield_ttm = get_xueqiu_dividend_yield(stock_code)
 
     # ---------------- 动态生成策略信号 ----------------
@@ -796,7 +718,10 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
 
     z_sc = safe_float(latest_row.get('z_score'))
     rsi14 = safe_float(latest_row.get('rsi_14'))
-    mr_sig = "bullish" if (z_sc < -2 or rsi14 < 30) else ("bearish" if (z_sc > 2 or rsi14 > 70) else "neutral")
+    bb_pct_b = safe_float(latest_row.get('bb_pct_b', 0.5))
+    bb_width = safe_float(latest_row.get('bb_width', 0))
+    
+    mr_sig = "bullish" if (z_sc < -2 or rsi14 < 30 or bb_pct_b < 0) else ("bearish" if (z_sc > 2 or rsi14 > 70 or bb_pct_b > 1) else "neutral")
     mr_conf = min(int(abs(z_sc) * 35), 99) if not np.isnan(z_sc) else 0
 
     mom3 = safe_float(latest_row.get('momentum_3m'))
@@ -811,16 +736,14 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     strategy_signals = {
         "趋势跟随": {
             "信号": sig_map.get(trend_sig, "中性"), "置信度": f"{trend_conf}%",
-            "具体指标": {
-                "ADX(平均趋向指数)": round(adx_val, 4), 
-                "趋势强度": f"{adx_val:.2f}%"
-            }
+            "具体指标": {"ADX(平均趋向指数)": round(adx_val, 4), "趋势强度": f"{adx_val:.2f}%"}
         },
         "均值回归": {
             "信号": sig_map.get(mr_sig, "中性"), "置信度": f"{mr_conf}%",
             "具体指标": {
                 "Z-score": round(z_sc, 4),
-                "布林带偏离度": f"{safe_float(latest_row.get('price_vs_bb')) * 100:.2f}%",
+                "布林极限(%b)": round(bb_pct_b, 4),
+                "布林带宽(Bandwidth)": f"{bb_width * 100:.2f}%",
                 "RSI(14)": round(rsi14, 4), 
                 "RSI(28)": round(safe_float(latest_row.get('rsi_28')), 4)
             }
@@ -855,21 +778,15 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
 
     # 4. 构建输出数据
     all_metrics = {
-        # ---------------- 宏观大盘环境 ----------------
         "宏观大盘环境": macro_str,
-        
-        # ---------------- 基础与行情数据 ----------------
         "股票代码": stock_code,
         "股票名称": stock_name,
         "所处行业": industry,
         "最新财务报告期": latest_report_date,
-        
         "最新价": latest_close,
         "涨跌幅": f"{pct_change:.2f}%",
         "换手率": f"{turnover_rate:.2f}%",
         "总市值": format_large_number(market_cap),
-
-        # ---------------- 均线与趋势指标 ----------------
         "MA5": round(safe_float(latest_row.get('MA5')), 2),
         "MA10": round(safe_float(latest_row.get('MA10')), 2),
         "MA20": round(safe_float(latest_row.get('MA20')), 2),
@@ -877,27 +794,19 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
         "MA120": round(safe_float(latest_row.get('MA120')), 2),
         "MA200": round(safe_float(latest_row.get('MA200')), 2),
         "MACD": round(safe_float(latest_row.get('MACD')), 2),
-
-        # ---------------- 周期极值 ----------------
         "近4周最高价": round(safe_float(latest_row.get('high_4w')), 2),
         "近4周最低价": round(safe_float(latest_row.get('low_4w')), 2),
         "近13周最高价": round(safe_float(latest_row.get('high_13w')), 2),
         "近13周最低价": round(safe_float(latest_row.get('low_13w')), 2),
         "近52周最高价": round(safe_float(latest_row.get('high_52w')), 2),
         "近52周最低价": round(safe_float(latest_row.get('low_52w')), 2),
-        
-        # ---------------- 高阶策略信号矩阵 ----------------
         "strategy_signals": json.dumps(strategy_signals, indent=2, ensure_ascii=False),
-
-        # ---------------- 估值指标及历史分位 ----------------
         "滚动市盈率 P/E(TTM)": f"{pe_ttm:.2f}",
         "市盈率(PE)历史分位": f"{safe_float(latest_row.get('pe_rank')):.2f}%",
         "市净率 P/B": f"{pb_mrq:.2f}",
         "市净率(PB)历史分位": f"{safe_float(latest_row.get('pb_rank')):.2f}%",
         "市销率 P/S": f"{ps_ttm:.2f}",
         "股息率(TTM)": dividend_yield_ttm,
-
-        # ---------------- 盈利与收益质量 (新浪) ----------------
         "营业总收入": format_large_number(get_fin_metric("营业总收入")),
         "净利润": format_large_number(get_fin_metric("净利润")),
         "扣非净利润": format_large_number(get_fin_metric("扣非净利润")),
@@ -905,25 +814,17 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
         "营业利润率": f"{get_fin_metric('营业利润率'):.2f}%",
         "销售净利率": f"{get_fin_metric('销售净利率'):.2f}%",
         "净资产收益率(ROE)": f"{get_fin_metric('净资产收益率(ROE)'):.2f}%",
-
-        # ---------------- 成长能力 (新浪) ----------------
         "营业总收入增长率": f"{get_fin_metric('营业总收入增长率'):.2f}%",
         "净利润增长率": f"{get_fin_metric('归属母公司净利润增长率'):.2f}%",
-
-        # ---------------- 财务风险与每股指标 (新浪) ----------------
         "资产负债率": f"{get_fin_metric('资产负债率'):.2f}%",
         "流动比率": f"{get_fin_metric('流动比率'):.2f}",
         "速动比率": f"{get_fin_metric('速动比率'):.2f}",
         "基本每股收益(元)": f"{get_fin_metric('基本每股收益'):.2f}",
         "每股净资产(元)": f"{get_fin_metric('每股净资产'):.2f}",
         "每股经营现金流(元)": f"{get_fin_metric('每股经营现金流'):.2f}",
-
-        # ---------------- 营运能力 (新浪) ----------------
         "应收账款周转天数": f"{get_fin_metric('应收账款周转天数'):.1f}天",
         "存货周转天数": f"{get_fin_metric('存货周转天数'):.1f}天",
         "总资产周转率": f"{get_fin_metric('总资产周转率'):.3f}",
-        
-        # ---------------- 机构业绩预测 (同花顺) ----------------
         **forecast_metrics,
     }
 
@@ -935,26 +836,16 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     print(f"\n【宏观大盘环境】\n{all_metrics['宏观大盘环境']}")
     print(f"\n【量化策略信号矩阵】\n{all_metrics['strategy_signals']}")
 
-    # =====================================================================
-    # 🌟 核心优化：生成结构化、打标分类的最终 Prompt 文本
-    # =====================================================================
     result = []
-    
-    # 1. 宏观环境
     result.append(f"======\n【宏观大盘环境】\n{macro_str}\n======")
-    
-    # 2. 基础信息
     result.append("\n### 【基础与行情数据】")
     for key in ["股票代码", "股票名称", "所处行业", "最新财务报告期", "最新价", "涨跌幅", "换手率", "总市值", "近52周最高价", "近52周最低价"]:
         result.append(f"{key}: {all_metrics.get(key, 'N/A')}")
         
-    # 3. 量化信号
     result.append("\n### 【量化策略信号矩阵】")
     result.append(json.dumps(strategy_signals, indent=2, ensure_ascii=False))
     
-    # 4. 核心财务指标 (打标分类)
     result.append("\n### 【核心财务指标】")
-    
     result.append("--- 估值指标 ---")
     for key in ["滚动市盈率 P/E(TTM)", "市盈率(PE)历史分位", "市净率 P/B", "市净率(PB)历史分位", "市销率 P/S", "股息率(TTM)"]:
         result.append(f"{key}: {all_metrics.get(key, 'N/A')}")
@@ -971,15 +862,12 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     for key in ["基本每股收益", "每股净资产", "每股经营现金流"]:
         result.append(f"{key}: {all_metrics.get(key, 'N/A')}")
 
-    # 5. 机构预测
     result.append("\n### 【机构业绩预测】")
     for key, value in forecast_metrics.items():
         result.append(f"{key}: {value}")
 
-    # 合并为最终字符串
     text_input = "\n".join(result)
     
-    # 周末保存文本缓存，避免同日多次执行或不同脚本调用时重复走 API
     if is_weekend:
         with open(cache_file_path, 'w', encoding='utf-8') as f:
             f.write(text_input)
