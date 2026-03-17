@@ -31,7 +31,7 @@ conda create -n agent python=3.12
 conda activate agent
 
 # 2. 安装核心依赖
-pip install dash dash-bootstrap-components plotly pandas numpy baostock akshare beautifulsoup4 python-dotenv json-repair mootdx questionary
+pip install dash dash-bootstrap-components plotly pandas numpy baostock akshare beautifulsoup4 python-dotenv json-repair mootdx questionary diskcache
 
 # 3. 安装大模型 SDK (根据你使用的模型选择)
 pip install google-genai openai 
