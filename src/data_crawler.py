@@ -409,14 +409,31 @@ def get_intraday_volume_ratio(traded_mins: int) -> float:
     return 1.0
 
 def get_macro_market_context(current_date: str) -> str:
-    """获取大盘(上证指数)数据并进行量化分析 (含估值、流动性与盘中非线性量能预估)"""
-    print("\n🌍 正在获取并分析宏观大盘(上证指数)与全市场宏观数据...")
+    """获取大盘(上证指数)数据并进行量化分析 (含估值、流动性与盘中非线性量能预估及盘后缓存)"""
     cache_dir = f"log/index_data"
     os.makedirs(cache_dir, exist_ok=True)
-    cache_file = os.path.join(cache_dir, f"sh000001_daily_{current_date}.csv")
+    
+    # 宏观环境文本缓存文件
+    macro_text_cache_file = os.path.join(cache_dir, f"macro_context_text_{current_date}.txt")
     
     now = datetime.now()
     today_str = now.strftime("%Y-%m-%d")
+    is_weekday = now.weekday() < 5
+    current_time_str = now.strftime("%H:%M")
+    is_trading_time = "09:30" <= current_time_str <= "15:05"
+
+    # ==================== 🌟 核心新增：盘后/周末免拉取缓存机制 ====================
+    # 如果当前不在交易时间，且今天的宏观文本缓存已存在，直接读取返回
+    if not is_trading_time and os.path.exists(macro_text_cache_file):
+        print("\n🌍 📦 检测到宏观大盘环境文本缓存已存在，直接读取跳过计算...")
+        with open(macro_text_cache_file, 'r', encoding='utf-8') as f:
+            return f.read()
+    # ==============================================================================
+
+    print("\n🌍 正在获取并分析宏观大盘(上证指数)与全市场宏观数据...")
+    
+    # K线历史数据缓存文件
+    cache_file = os.path.join(cache_dir, f"sh000001_daily_{current_date}.csv")
     
     # 1. 加载历史数据并缓存 (每天只全量拉一次历史)
     if os.path.exists(cache_file):
@@ -430,15 +447,11 @@ def get_macro_market_context(current_date: str) -> str:
         except Exception as e:
             print(f"❌ 获取大盘历史数据失败: {e}")
             return "大盘数据获取失败，宏观环境未知。"
-
-    # 2. 判断是否需要拉取实时数据 (工作日 9:30 - 15:05)
-    is_weekday = now.weekday() < 5
-    current_time_str = now.strftime("%H:%M")
-    is_trading_time = "09:30" <= current_time_str <= "15:05"
     
-    latest_date = df_index['date'].iloc[-1].strftime("%Y-%m-%d")
+    latest_date = df_index['date'].iloc[-1].strftime("%Y-%m-%d") if not df_index.empty else ""
+    is_estimating = False  # 初始化预估状态标识
     
-    # 必须是工作日的 09:30 之后，才允许追加/覆盖当天的实时行情
+    # 2. 盘中实时行情追加与修正
     if is_weekday and current_time_str >= "09:30":
         if is_trading_time or today_str != latest_date:
             try:
@@ -447,15 +460,13 @@ def get_macro_market_context(current_date: str) -> str:
                 latest_close = safe_float(sh_spot['最新价'])
                 spot_volume = safe_float(sh_spot['成交量'])
                 
-                # ==================== 核心修复 1：成交量单位对齐 ====================
-                # 新浪实时接口的成交量默认是“手”，而历史接口通常是“股”。
+                # 修复1：成交量单位对齐 (手转股)
                 if not df_index.empty:
                     prev_vol = df_index.iloc[-1]['volume']
-                    # 如果发现获取到的实时成交量异常小（小于历史最后一天成交量的1/10），自动乘以100对齐单位
                     if spot_volume > 0 and spot_volume < (prev_vol / 10):
                         spot_volume = spot_volume * 100
                 
-                # ==================== 核心修复 2：盘中非线性量能预估 ====================
+                # 修复2：盘中非线性量能预估
                 if is_trading_time:
                     traded_minutes = 0
                     if "09:30" <= current_time_str <= "11:30":
@@ -467,9 +478,9 @@ def get_macro_market_context(current_date: str) -> str:
                         
                     if 0 < traded_minutes < 240:
                         current_ratio = get_intraday_volume_ratio(traded_minutes)
-                        spot_volume = spot_volume / current_ratio  # 动态放大到全天预估量
-                # =====================================================================
-
+                        spot_volume = spot_volume / current_ratio  
+                        is_estimating = True  # 👈 成功触发预估机制
+                
                 if latest_close > 0 and spot_volume > 0:
                     new_row = {
                         'date': pd.to_datetime(today_str),
@@ -498,7 +509,6 @@ def get_macro_market_context(current_date: str) -> str:
     processed_index = calculate_advanced_indicators(df_calc)
     latest_idx = processed_index.iloc[-1]
     
-    # 提取基础数据和核心均线
     actual_latest_date = latest_idx['日期'].strftime("%Y-%m-%d")
     close_val = safe_float(latest_idx['收盘'])
     ma20_val = safe_float(latest_idx.get('MA20', 0))
@@ -507,25 +517,15 @@ def get_macro_market_context(current_date: str) -> str:
     ma200_val = safe_float(latest_idx.get('MA200', 0))
     pct_chg = safe_float(latest_idx.get('daily_return', 0)) * 100
     
-    # 判断短期趋势
-    if close_val > ma20_val and ma20_val > ma60_val:
-        trend = "多头排列 (站上短中期均线)"
-    elif close_val < ma20_val and ma20_val < ma60_val:
-        trend = "空头排列 (跌破短中期均线)"
-    elif close_val > ma20_val:
-        trend = "震荡偏多 (短线站上MA20)"
-    else:
-        trend = "震荡偏空 (短线跌破MA20)"
+    # 趋势判定
+    if close_val > ma20_val and ma20_val > ma60_val: trend = "多头排列 (站上短中期均线)"
+    elif close_val < ma20_val and ma20_val < ma60_val: trend = "空头排列 (跌破短中期均线)"
+    elif close_val > ma20_val: trend = "震荡偏多 (短线站上MA20)"
+    else: trend = "震荡偏空 (短线跌破MA20)"
 
-    # 判断长期牛熊判决线 (200日均线)
-    if close_val > ma200_val:
-        long_trend = "长线位于牛熊分界线(MA200)之上"
-    else:
-        long_trend = "长线位于牛熊分界线(MA200)之下，处于战略防守期"
+    long_trend = "长线位于牛熊分界线(MA200)之上" if close_val > ma200_val else "长线位于牛熊分界线(MA200)之下，处于战略防守期"
 
-    # ==================== 新增宏观数据拉取 ====================
-
-    # 4. 获取 A 股等权重与中位数市盈率 (估值与钟摆定位)
+    # 4. 获取 A 股等权重与中位数市盈率 
     pe_str = "A股整体估值获取失败"
     try:
         pe_df = ak.stock_a_ttm_lyr()
@@ -537,10 +537,9 @@ def get_macro_market_context(current_date: str) -> str:
             mid_pe = float(latest_pe['middlePETTM'])
             pe_rank = float(latest_pe['quantileInRecent10YearsMiddlePeTtm']) * 100
             
-            # 定位钟摆位置
             if pe_rank <= 20: pe_status = "极度低估(左侧击球区)"
             elif pe_rank <= 40: pe_status = "偏低估(安全区)"
-            elif pe_rank >= 90: pe_status = "极度高估(泡沫警戒区)"
+            elif pe_rank >= 80: pe_status = "极度高估(泡沫警戒区)"
             elif pe_rank >= 60: pe_status = "偏高估(风险区)"
             else: pe_status = "估值中枢(中性区)"
             
@@ -548,7 +547,7 @@ def get_macro_market_context(current_date: str) -> str:
     except Exception as e:
         print(f"⚠️ A股PE获取失败: {e}")
 
-    # 5. 获取十年期国债收益率 (流动性周期)
+    # 5. 获取十年期国债收益率 
     bond_str = "国债收益率获取失败"
     try:
         bond_df = ak.bond_gb_zh_sina(symbol="中国10年期国债")
@@ -565,24 +564,22 @@ def get_macro_market_context(current_date: str) -> str:
     except Exception as e:
         print(f"⚠️ 国债收益率获取失败: {e}")
 
-    # ==================== 量能放大对比测算 ====================
+    # 6. 量能放大对比测算 
     vol_current = safe_float(latest_idx.get('成交量', 0))
     vol_ma5 = safe_float(latest_idx.get('volume_ma5', 0))
+    prefix_text = "预估全天" if is_estimating else "实际"
+    
     if vol_ma5 > 0:
         vol_ratio = vol_current / vol_ma5
-        if vol_ratio >= 1.2:
-            vol_status = f"显著放量 (预估全天较5日均量增量 +{(vol_ratio-1)*100:.1f}%)"
-        elif vol_ratio <= 0.8:
-            vol_status = f"显著缩量 (预估全天较5日均量缩量 -{(1-vol_ratio)*100:.1f}%)"
-        else:
-            vol_status = f"平量震荡 (预估全天约为5日均量的 {vol_ratio*100:.1f}%)"
+        if vol_ratio >= 1.2: vol_status = f"显著放量 ({prefix_text}较5日均量增量 +{(vol_ratio-1)*100:.1f}%)"
+        elif vol_ratio <= 0.8: vol_status = f"显著缩量 ({prefix_text}较5日均量缩量 -{(1-vol_ratio)*100:.1f}%)"
+        else: vol_status = f"平量震荡 ({prefix_text}约为5日均量的 {vol_ratio*100:.1f}%)"
     else:
         vol_status = "量能数据缺失"
 
-    # ==================== 组合输出 ====================
+    # 7. 组合输出 
     rsi14 = safe_float(latest_idx.get('rsi_14', 50))
     z_score = safe_float(latest_idx.get('z_score', 0))
-    
     rsi_status = "超买极值" if rsi14 > 70 else ("超卖极值" if rsi14 < 30 else "中性区间")
     z_status = "逼近布林带上轨" if z_score > 2 else ("逼近布林带下轨" if z_score < -2 else "轨内正常运行")
 
@@ -595,6 +592,16 @@ def get_macro_market_context(current_date: str) -> str:
         f"6. 情绪与极值: RSI14={rsi14:.2f} ({rsi_status}); 偏离度(Z-Score)={z_score:.2f} ({z_status})"
     )
     
+    # ==================== 🌟 核心新增：盘后写入缓存 ====================
+    # 如果不是在盘中预估阶段，说明获取的是完整定局数据，保存为文本缓存
+    if not is_estimating:
+        try:
+            with open(macro_text_cache_file, 'w', encoding='utf-8') as f:
+                f.write(macro_context)
+        except Exception as e:
+            print(f"⚠️ 宏观文本缓存写入失败: {e}")
+    # ====================================================================
+
     return macro_context
 
 def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
