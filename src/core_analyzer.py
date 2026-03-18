@@ -2,6 +2,7 @@
 import os
 import re
 import concurrent.futures
+import time
 import pandas as pd
 from datetime import datetime, timedelta
 import json_repair
@@ -172,7 +173,10 @@ def run_core_analysis(
                 
             judge_msg += "作为量化基金的投资总监，你拥有最终拍板权。请严格按照以下【核心裁判原则】进行综合决策：\n1. 事实核查先行（零容忍数据幻觉）：必须先核对大师引用的数据是否与上文提供的【客观标的数据】完全一致。对于任何基于虚构数据得出的结论，必须直接一票否决。\n2. 寻找非共识的正确与流派交叉验证：重点审视大师之间的【分歧点】。例如，当价值派（如巴菲特）与趋势派（如利弗莫尔）在特定点位达成共识时，该决策置信度极高；若出现严重分歧，需判断当前市场环境更适用哪种流派。\n3. 拒绝无效瘫痪（果断决策）：不要因为存在分歧就本能地退缩到‘观望’。在剔除幻觉意见后，评估盈亏比，勇敢给出具体的买入/卖出、观望指令和点位。\n4. 资金面数据的辩证看待：资金流向是重要的辅助验证工具，但【绝非所有策略的硬性前提】。如果是左侧深度价值潜伏，主力资金未明显介入甚至流出是完全正常的；如果是右侧主升浪突破，则需要资金合力。切勿因为缺乏明显的资金净流入，就教条式地否决优秀的左侧或长线基本面机会。\n\n请给出最终决策。你必须在 JSON 的 '原因' 字段中分段输出：\n【事实核查与幻觉剔除】：简述是否有大师引用了错误数据。\n【大师观点交锋】：简述各流派有效观点的交锋与共鸣点。\n【总监拍板逻辑】：详细说明你最终的综合裁决理由。\n注意：你的输出必须是一个单一的、严格符合原定系统提示词规范的 JSON 对象！\n"
 
+            print(f"⏳ 开始呼叫总监模型: {pro_model}...")
+            start_time = time.time()
             res_text = get_LLM_message(system_content=sys_content, user_message=judge_msg, model_id=pro_model)
+            print(f"✅ 总监模型返回，纯 API 耗时: {time.time() - start_time:.2f} 秒")
             model_tag = f"MoA-{len(committee_agents)}大师-{pro_model}"
             
         else:

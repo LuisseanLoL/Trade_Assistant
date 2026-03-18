@@ -16,6 +16,9 @@ from dotenv import load_dotenv
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("requests").setLevel(logging.WARNING)
+logging.getLogger("google").setLevel(logging.WARNING)
+logging.getLogger("google.genai").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
 
 # 加载环境变量
 load_dotenv()

@@ -1,3 +1,4 @@
+import logging
 from openai import OpenAI
 import re
 import copy
@@ -5,6 +6,11 @@ import time
 import os
 from google import genai
 from google.genai import types
+
+# 👇 新增下面这两行，把 Google SDK 的 INFO 日志全屏蔽掉
+logging.getLogger("google").setLevel(logging.WARNING)
+logging.getLogger("google.genai").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
 
 output_schema = {
   "type": "json_schema",
