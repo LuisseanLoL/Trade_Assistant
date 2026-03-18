@@ -66,6 +66,20 @@ def get_macro_news(current_date_str):
         
     return ""
 
+def get_latest_flash_news(limit=20):
+    """【新增】获取最新新浪全球快讯 (实时获取，不缓存)"""
+    try:
+        print("🌍 正在实时获取最新全球快讯...")
+        df = ak.stock_info_global_sina()
+        if not df.empty:
+            # 提取前 limit 条（默认20条，可按需修改）
+            df_head = df.head(limit)
+            flash_texts = [f"[{t}] {c}" for t, c in zip(df_head['时间'], df_head['内容'])]
+            return "【最新全球快讯】\n" + "\n".join(flash_texts)
+    except Exception as e:
+        print(f"⚠️ 获取最新全球快讯失败: {e}")
+    return ""
+
 
 def get_news_titles(symbol="600000", stock_name='浦发银行', max_news=20, save_txt=True, current_date='20250214'):
     """
@@ -176,13 +190,21 @@ def get_news_titles(symbol="600000", stock_name='浦发银行', max_news=20, sav
     if not text_content:
         print(f"未获取到 {symbol} 的个股新闻数据")
 
-    # 宏观财经早餐 (这里保留了你的原逻辑)
+    # 1. 拼接宏观财经早餐 (带缓存逻辑)
     try:
         macro_news_text = get_macro_news(current_date)
         if macro_news_text:
             text_content = (text_content + "\n\n" + macro_news_text) if text_content else macro_news_text
-    except NameError:
-        pass # 静默跳过未定义的函数错误，避免打断主体流程
+    except Exception as e:
+        print(f"处理宏观新闻时跳过: {e}")
+
+    # 2. 【新增】拼接最新全球快讯 (不缓存)
+    try:
+        flash_news_text = get_latest_flash_news(limit=10) # 默认抓取最新10条，可以自己调整参数
+        if flash_news_text:
+            text_content = (text_content + "\n\n" + flash_news_text) if text_content else flash_news_text
+    except Exception as e:
+        print(f"处理快讯时跳过: {e}")
 
     # 保存文件
     news_dir = f"log/stock_news/{current_date}"
@@ -194,7 +216,7 @@ def get_news_titles(symbol="600000", stock_name='浦发银行', max_news=20, sav
         try:
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(text_content)
-            print(f"✅ 新闻与宏观摘要已保存至: {filepath}")
+            print(f"✅ 新闻摘要(个股+宏观+快讯)已保存至: {filepath}")
         except Exception as e:
             print(f"保存文件失败: {e}")
         
@@ -204,6 +226,6 @@ def get_news_titles(symbol="600000", stock_name='浦发银行', max_news=20, sav
 if __name__ == "__main__":
     # 使用今日日期测试
     today_str = datetime.now().strftime("%Y-%m-%d")
-    result = get_news_titles(symbol="002170", stock_name='芭田股份', max_news=20, current_date=today_str)
+    result = get_news_titles(symbol="600000", stock_name='浦发银行', max_news=20, current_date=today_str)
     print("\n最终抓取结果展示：")
     print(result)
