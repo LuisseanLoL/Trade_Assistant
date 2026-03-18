@@ -15,6 +15,10 @@ from src.LLM_chat import get_model_config
 # 在所有逻辑开始前，强制加载根目录的 .env 文件
 load_dotenv()
 
+# ⚠️ 注意：如果你在国内环境运行，且需要访问外部 API，请确保正确配置了系统环境变量中的 HTTP_PROXY 和 HTTPS_PROXY。
+# os.environ["HTTP_PROXY"] = "http://127.0.0.1:10809"
+# os.environ["HTTPS_PROXY"] = "http://127.0.0.1:10809"
+
 # 🎯 针对 A 股市场特色精选的 11 位默认参会大师
 DEFAULT_AGENT_NAMES = [
     "A_Share_Hot_Money", "Richard_Wyckoff", "Jesse_Livermore", 

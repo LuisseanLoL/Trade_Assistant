@@ -102,7 +102,7 @@ def run_core_analysis(
 相关新闻如下：
 {news_titles}
 
-当前该股仓位/持仓数量：{position}
+当前该股仓位：{position} %
 当前持仓成本: {cost} 元
 
 请记住，行动必须是买入、卖出、持有或观望。
