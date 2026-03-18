@@ -31,13 +31,8 @@ conda create -n agent python=3.12
 conda activate agent
 
 # 2. 安装核心依赖
-pip install dash dash-bootstrap-components plotly pandas numpy baostock akshare beautifulsoup4 python-dotenv json-repair mootdx questionary diskcache
+pip install -r requirements.txt
 
-# 3. 安装大模型 SDK (根据你使用的模型选择)
-pip install google-genai openai 
-
-# 4. 安装 Playwright 及内置浏览器（用于新闻等无头抓取）
-pip install playwright
 playwright install chromium
 
 ```
