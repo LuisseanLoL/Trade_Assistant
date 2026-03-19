@@ -64,6 +64,17 @@ def run_core_analysis(
         df_monthly = df_monthly_tmp.groupby('year_month').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'}).reset_index()
         df_monthly.rename(columns={'year_month': 'date'}, inplace=True)
         df_monthly['date'] = df_monthly['date'].astype(str)
+        # ======== 新增：压缩与简化月K线价格和交易量 ========
+        # 1. 将开盘、最高、最低、收盘价保留2位小数
+        for col in ['open', 'high', 'low', 'close']:
+            if col in df_monthly.columns:
+                df_monthly[col] = df_monthly[col].apply(lambda x: f"{float(x):.2f}" if pd.notna(x) else x)
+        
+        # 2. 调用已导入的 format_large_number 将交易量转换为 万/亿
+        if 'volume' in df_monthly.columns:
+            df_monthly['volume'] = df_monthly['volume'].apply(format_large_number)
+        # ====================================================
+
         monthly_str = df_monthly.tail(24).to_markdown(index=False)
     else:
         monthly_str = "暂无"
