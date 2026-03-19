@@ -578,35 +578,70 @@ def get_macro_market_context(current_date: str) -> str:
             
         if_hold_change = if_current_hold - if_yesterday_hold
 
-        # 4. 获取对应现货指数最新价，计算真实升贴水
+        # 4. 获取对应现货指数最新价与昨收价，计算真实升贴水与边际变化
         hs300_spot = 0.0
+        hs300_pre_close = 0.0
         zz1000_spot = 0.0
+        zz1000_pre_close = 0.0
+        
         try:
             spot_df_all = ak.stock_zh_index_spot_sina()
+            
+            # 提取沪深300
             hs300_row = spot_df_all[spot_df_all['代码'] == 'sh000300']
             if hs300_row.empty: hs300_row = spot_df_all[spot_df_all['代码'] == 'sz399300']
-            if not hs300_row.empty: hs300_spot = float(hs300_row.iloc[0]['最新价'])
+            if not hs300_row.empty: 
+                hs300_spot = float(hs300_row.iloc[0]['最新价'])
+                hs300_pre_close = float(hs300_row.iloc[0]['昨收'])
             
+            # 提取中证1000
             zz1000_row = spot_df_all[spot_df_all['代码'] == 'sh000852']
-            if not zz1000_row.empty: zz1000_spot = float(zz1000_row.iloc[0]['最新价'])
+            if not zz1000_row.empty: 
+                zz1000_spot = float(zz1000_row.iloc[0]['最新价'])
+                zz1000_pre_close = float(zz1000_row.iloc[0]['昨收'])
+                
+            # 提取期指昨日收盘价 (复用前面的 df_if_hist)
+            if last_date_in_hist == today_str:
+                if_pre_close = float(df_if_hist.iloc[-2]['收盘价'])
+            else:
+                if_pre_close = float(df_if_hist.iloc[-1]['收盘价'])
+                
+            # ⚠️ 注意：为了极致速度，这里省略了拉取 IM0 历史的步骤。
+            # 直接用当前基差与昨日价差做近似评估，或者你可以像 IF 一样加一段拉取 IM0 的代码。
+            # 为了简便，我们重点输出基差的绝对值，并让后台算出一个基差Delta。
+            
+            if hs300_spot > 0:
+                # 今天基差
+                if_basis_today = if_current_price - hs300_spot
+                # 昨天基差
+                if_basis_yest = if_pre_close - hs300_pre_close
+                # 基差变化 (正数说明期指表现强于现货->走强/收敛，负数说明期指更弱->走弱/扩大)
+                if_basis_delta = if_basis_today - if_basis_yest
+                
+                if_basis_str = f"升水 {if_basis_today:.1f}点" if if_basis_today > 0 else f"贴水 {abs(if_basis_today):.1f}点"
+                if_delta_str = f"(较昨日走强/收敛 {abs(if_basis_delta):.1f}点)" if if_basis_delta > 0 else f"(较昨日走弱/扩大 {abs(if_basis_delta):.1f}点)"
+                if_final_str = f"{if_basis_str} {if_delta_str}"
+            else:
+                if_final_str = "基差未知"
+
+            if zz1000_spot > 0:
+                im_basis_today = im_current_price - zz1000_spot
+                im_basis_str = f"升水 {im_basis_today:.1f}点" if im_basis_today > 0 else f"贴水 {abs(im_basis_today):.1f}点"
+                # 由于没拉取IM昨收，这里只输出绝对值。若需要可照猫画虎拉取 IM0 历史
+                im_final_str = f"{im_basis_str}"
+            else:
+                im_final_str = "基差未知"
+
         except Exception as e:
             print(f"⚠️ 获取现货指数(沪深300/中证1000)实时行情失败: {e}")
-
-        # 5. 格式化基差与期指输出文本
-        if hs300_spot > 0 and zz1000_spot > 0:
-            if_basis = if_current_price - hs300_spot
-            im_basis = im_current_price - zz1000_spot
-            if_basis_str = f"升水 {if_basis:.1f}点" if if_basis > 0 else f"贴水 {abs(if_basis):.1f}点"
-            im_basis_str = f"升水 {im_basis:.1f}点" if im_basis > 0 else f"贴水 {abs(im_basis):.1f}点"
-        else:
-            if_basis_str = "基差未知(现货系统数据获取失败)"
-            im_basis_str = "基差未知(现货系统数据获取失败)"
+            if_final_str, im_final_str = "数据异常", "数据异常"
 
         hold_change_str = f"增加 {abs(if_hold_change)}手" if if_hold_change > 0 else f"锐减 {abs(if_hold_change)}手"
 
+        # 5. 格式化输出文本
         futures_text = (
-            f"【期指与衍生品前瞻】\n"
-            f"7. 升贴水状态: IF主力基差 {if_basis_str}；IM主力基差 {im_basis_str}。\n"
+            f"【期指与衍生品前瞻 (自动化生成)】\n"
+            f"7. 升贴水状态: IF主力基差 {if_final_str}；IM主力基差 {im_final_str}。\n"
             f"8. 持仓量异动: IF主力实时持仓 {if_current_hold}手，较昨日{hold_change_str}。\n"
             f"9. 风格与护盘信号: [当前现货基准: 沪深300报 {hs300_spot}, 中证1000报 {zz1000_spot} | 期指IF报 {if_current_price}, IM报 {im_current_price}]"
         )
