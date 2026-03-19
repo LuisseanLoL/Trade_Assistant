@@ -535,13 +535,93 @@ def get_macro_market_context(current_date: str) -> str:
     elif bb_width > 0.10: width_status = "喇叭口敞开 (高波动趋势发散)"
     else: width_status = "带宽正常"
 
+    # ==========================================
+    # 🌟 核心新增：期指与衍生品前瞻分析
+    # ==========================================
+    futures_text = "\n【期指与衍生品前瞻】\n暂无数据 (获取或计算失败)"
+    try:
+        print("🌍 正在获取期指(IF/IM)盘面、持仓与基差数据...")
+        
+        # 1. 获取并清洗主力合约代码
+        raw_cffex_text = ak.match_main_contract(symbol="cffex")
+        cffex_list = [s for s in raw_cffex_text.split(',') if '无主力' not in s]
+        clean_cffex_text = ",".join(cffex_list)
+        
+        # 2. 实时盘面数据获取
+        df_spot_ff = ak.futures_zh_spot(symbol=clean_cffex_text, market="FF", adjust='0')
+        if_row = df_spot_ff[df_spot_ff['symbol'].str.contains('沪深300')].iloc[0]
+        im_row = df_spot_ff[df_spot_ff['symbol'].str.contains('中证1000')].iloc[0]
+        
+        if_current_price = float(if_row['current_price'])
+        if_current_hold = int(if_row['hold'])
+        im_current_price = float(im_row['current_price'])
+        
+        # 3. 历史数据获取与缓存管理 (用于获取真实昨日持仓)
+        if_cache_file = os.path.join(cache_dir, f"IF0_daily_{current_date}.csv")
+        if os.path.exists(if_cache_file):
+            df_if_hist = pd.read_csv(if_cache_file)
+        else:
+            # 往前多推几十天保证能拿到足够的交易日数据
+            start_d = (now - timedelta(days=60)).strftime("%Y%m%d")
+            df_if_hist = ak.futures_main_sina(symbol="IF0", start_date=start_d, end_date="20991231")
+            df_if_hist.to_csv(if_cache_file, index=False)
+            
+        df_if_hist['日期'] = pd.to_datetime(df_if_hist['日期'])
+        df_if_hist = df_if_hist.sort_values('日期')
+        last_date_in_hist = df_if_hist.iloc[-1]['日期'].strftime("%Y-%m-%d")
+        
+        # 智能判断：如果历史数据最后一天已经是今天，昨日持仓要取倒数第二天
+        if last_date_in_hist == today_str:
+            if_yesterday_hold = int(df_if_hist.iloc[-2]['持仓量'])
+        else:
+            if_yesterday_hold = int(df_if_hist.iloc[-1]['持仓量'])
+            
+        if_hold_change = if_current_hold - if_yesterday_hold
+
+        # 4. 获取对应现货指数最新价，计算真实升贴水
+        hs300_spot = 0.0
+        zz1000_spot = 0.0
+        try:
+            spot_df_all = ak.stock_zh_index_spot_sina()
+            hs300_row = spot_df_all[spot_df_all['代码'] == 'sh000300']
+            if hs300_row.empty: hs300_row = spot_df_all[spot_df_all['代码'] == 'sz399300']
+            if not hs300_row.empty: hs300_spot = float(hs300_row.iloc[0]['最新价'])
+            
+            zz1000_row = spot_df_all[spot_df_all['代码'] == 'sh000852']
+            if not zz1000_row.empty: zz1000_spot = float(zz1000_row.iloc[0]['最新价'])
+        except Exception as e:
+            print(f"⚠️ 获取现货指数(沪深300/中证1000)实时行情失败: {e}")
+
+        # 5. 格式化基差与期指输出文本
+        if hs300_spot > 0 and zz1000_spot > 0:
+            if_basis = if_current_price - hs300_spot
+            im_basis = im_current_price - zz1000_spot
+            if_basis_str = f"升水 {if_basis:.1f}点" if if_basis > 0 else f"贴水 {abs(if_basis):.1f}点"
+            im_basis_str = f"升水 {im_basis:.1f}点" if im_basis > 0 else f"贴水 {abs(im_basis):.1f}点"
+        else:
+            if_basis_str = "基差未知(现货系统数据获取失败)"
+            im_basis_str = "基差未知(现货系统数据获取失败)"
+
+        hold_change_str = f"增加 {abs(if_hold_change)}手" if if_hold_change > 0 else f"锐减 {abs(if_hold_change)}手"
+
+        futures_text = (
+            f"【期指与衍生品前瞻】\n"
+            f"7. 升贴水状态: IF主力基差 {if_basis_str}；IM主力基差 {im_basis_str}。\n"
+            f"8. 持仓量异动: IF主力实时持仓 {if_current_hold}手，较昨日{hold_change_str}。\n"
+            f"9. 风格与护盘信号: [当前现货基准: 沪深300报 {hs300_spot}, 中证1000报 {zz1000_spot} | 期指IF报 {if_current_price}, IM报 {im_current_price}]"
+        )
+    except Exception as e:
+        print(f"⚠️ 期指模块处理异常，已跳过: {e}")
+
+
     macro_context = (
         f"1. 基础行情: 上证指数 {close_val:.2f} (数据日期: {actual_latest_date}, 日涨跌幅: {pct_chg:.2f}%)\n"
         f"2. 趋势与量能: 短期{trend}；大盘量能呈现{vol_status}。\n"
         f"3. 核心均线: MA20={ma20_val:.2f}, MA60={ma60_val:.2f}, MA120={ma120_val:.2f}, MA200={ma200_val:.2f} ({long_trend})\n"
         f"4. 估值与钟摆: {pe_str}\n"
         f"5. 宏观与流动性: {bond_str}\n"
-        f"6. 情绪与通道: RSI14={rsi14:.2f} ({rsi_status}); 布林极限%b={bb_pct_b:.2f} ({bb_status}), 布林带宽={bb_width*100:.2f}% ({width_status})"
+        f"6. 情绪与通道: RSI14={rsi14:.2f} ({rsi_status}); 布林极限%b={bb_pct_b:.2f} ({bb_status}), 布林带宽={bb_width*100:.2f}% ({width_status})\n"
+        f"\n{futures_text}"
     )
     
     # 盘后写入缓存
