@@ -85,6 +85,20 @@ def get_news_titles(symbol="600000", stock_name='浦发银行', max_news=20, sav
     """
     获取并处理新闻标题 (包含内容与标题双搜索并集，并增加随机休眠防反爬)
     """
+    # ==========================================
+    # 🌟 核心新增：在最开头检查是否存在今日缓存
+    # ==========================================
+    news_dir = f"log/stock_news/{current_date}"
+    os.makedirs(news_dir, exist_ok=True)
+    filename = f"{symbol}_{stock_name}_News_{current_date}.txt"
+    filepath = os.path.join(news_dir, filename)
+    
+    if os.path.exists(filepath):
+        print(f"📦 [新闻缓存命中] 今日新闻已抓取过，直接读取: {filepath}")
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read()
+
+    # 如果没有缓存，则继续执行原有的抓取逻辑
     urls = [
         f"https://so.eastmoney.com/news/s?keyword={stock_name}&type=title&sort=time",
         f"https://so.eastmoney.com/news/s?keyword={stock_name}&type=content&sort=time",

@@ -11,6 +11,7 @@ import baostock as bs
 from src.data_crawler import get_stock_data, get_stock_name_bs, get_chart_data, get_ths_fund_flow, get_30m_chart_data, format_large_number
 from src.LLM_chat import get_LLM_message, get_model_config
 from src.utils import fetch_news_safely, parse_llm_json
+from src.financial_analyzer import process_pipeline
 
 def run_core_analysis(
     stock_code, position, cost, current_date_str,
@@ -40,7 +41,7 @@ def run_core_analysis(
         df_30m = get_30m_chart_data(stock_code, beg, end)
 
         try:
-            fund_df = get_ths_fund_flow(stock_code)
+            fund_df = get_ths_fund_flow(stock_code, current_date_str)
             if not fund_df.empty:
                 df_chart = pd.merge(df_chart, fund_df, on='date', how='left')
         except Exception as e:
@@ -152,6 +153,29 @@ def run_core_analysis(
     else:
         res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=flash_model)
 
+    # ==========================================
+    # 🌟 新增：2.5 阶段：深度财报研读 (仅在进入决议阶段时触发)
+    # ==========================================
+    if run_pro:
+        print(f"\n🎯 [{stock_code}] {s_name} 进入高级决议圈，触发大模型深度财报研读...")
+        try:
+            # 利用正则从 data_crawler 拼接的 user_msg 中提取“最新财务报告期” (例如：2024-09-30)
+            match = re.search(r"最新财务报告期:\s*([0-9\-]+)", in_str)
+            if match:
+                # 转成 '20240930' 格式传给分析器
+                report_date_raw = match.group(1).replace("-", "").strip() 
+                
+                # 调用财报分析器（自带双重缓存）
+                fin_summary = process_pipeline(stock_code, safe_s_name, report_date_raw)
+                
+                if fin_summary:
+                    # 将极其重要的财报总结追加到发送给高阶大师的 user_msg 尾部
+                    user_msg += f"\n\n=================================\n### 【大模型深度财报解析与战略一致性校验】\n{fin_summary}\n"
+            else:
+                print("   ⚠️ 无法在原文中提取到财报日期，跳过财报解析。")
+        except Exception as e:
+            print(f"   ⚠️ 财报研读模块调用失败，已跳过: {e}")
+
     # 3. 第二阶段：高级决议阶段 (MoA vs 单模型)
     if run_pro: 
         if use_moa and committee_agents:
@@ -168,14 +192,27 @@ def run_core_analysis(
                 except Exception as e:
                     return f"该大师 ({agent_name}) 分析失败：{e}"
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+            # ==========================================
+            # 🌟 新增：大师团并发调用提示与计时
+            # ==========================================
+            print(f"⏳ 开始呼叫 {len(committee_agents)} 位投资大师模型并发分析 (底层模型: {committee_model})...")
+            committee_start_time = time.time()
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
                 futures = {executor.submit(agent_task, agent_name): agent_name for agent_name in committee_agents}
                 for future in concurrent.futures.as_completed(futures):
                     agent_name = futures[future]
+                    display_name = agent_name.replace("_", " ")
                     try:
                         committee_results[agent_name] = future.result()
+                        # 新增：单个大师完成时的实时进度提示
+                        print(f"   ✅ 大师 [{display_name}] 意见已送达！")
                     except Exception as e:
                         committee_results[agent_name] = f"该大师分析失败：{e}"
+                        print(f"   ❌ 大师 [{display_name}] 分析失败！异常: {e}")
+            
+            committee_cost_time = time.time() - committee_start_time
+            print(f"✅ 大师团所有成员分析完毕，并发总耗时: {committee_cost_time:.2f} 秒\n")
             
             judge_msg = f"{user_msg}\n\n=================================\n【投资总监（AI裁判）专属决议指令】\n以上是客观标的数据。以下是多位顶尖投资大师（不同交易流派的 Agent）针对该数据给出的独立分析和 JSON 报告：\n\n"
             for agent_name, res in committee_results.items():

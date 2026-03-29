@@ -147,8 +147,36 @@ def get_xueqiu_dividend_yield(symbol: str) -> str:
         
     return dividend_yield
 
-def get_ths_fund_flow(stock_code: str) -> pd.DataFrame:
-    """使用 Playwright 从同花顺网页抓取历史资金流向数据"""
+def get_ths_fund_flow(stock_code: str, current_date_str: str) -> pd.DataFrame:
+    """使用 Playwright 从同花顺网页抓取历史资金流向数据 (带智能缓存机制)"""
+    now = datetime.now()
+    is_weekend = now.weekday() >= 5
+    main_cache_file = f"log/stock_data/{current_date_str}/{stock_code}_full_metrics_cache.txt"
+    
+    if is_weekend and os.path.exists(main_cache_file):
+        print(f"   🚫 [静默模式] 检测到全局大缓存已存在，跳过资金流网页爬取。")
+        return pd.DataFrame()
+
+    # 1. 资金流自身的日期处理（周末自动回溯到周五）
+    if now.weekday() == 5: 
+        effective_dt = now - timedelta(days=1)
+    elif now.weekday() == 6: 
+        effective_dt = now - timedelta(days=2)
+    else:
+        effective_dt = now
+        
+    effective_date_str = effective_dt.strftime("%Y-%m-%d")
+    
+    # 2. 检查资金流专属的独立 CSV 缓存
+    cache_dir = "log/fund_flow"
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_file = os.path.join(cache_dir, f"{stock_code}_{effective_date_str}.csv")
+    
+    if os.path.exists(cache_file):
+        print(f"📦 [资金流缓存命中] 读取本地同花顺数据: {cache_file}")
+        return pd.read_csv(cache_file)
+
+    # 3. 实在没办法了，才启动无头浏览器爬虫
     url = f"https://stockpage.10jqka.com.cn/{stock_code}/funds/"
     fund_data = []
     
@@ -201,7 +229,10 @@ def get_ths_fund_flow(stock_code: str) -> pd.DataFrame:
         for col in cols_to_keep[1:]:
             df[col] = df[col].str.replace('%', '').str.replace(',', '').apply(safe_float)
             
+        # 4. 落盘保存缓存
+        df.to_csv(cache_file, index=False, encoding='utf-8-sig')
         return df
+        
     return pd.DataFrame()
 
 def safe_float(val, default=0.0):

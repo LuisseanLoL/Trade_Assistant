@@ -196,7 +196,8 @@ def gemini_chat(system_content, user_message, model, api_key, is_vertex=False, u
         adapt_schema_for_gemini(gemini_schema)
         config_kwargs["response_schema"] = gemini_schema
     else:
-        config_kwargs["response_mime_type"] = "text/plain"
+        # 🌟 核心修改：如果 schema 为 None，只要求返回 JSON 格式，不限制具体字段
+        config_kwargs["response_mime_type"] = "application/json"
 
     if tools:
         config_kwargs["tools"] = tools
@@ -228,20 +229,29 @@ def openai_chat(system_content, user_message, schema, api_key, base_url, model, 
         {"role": "user", "content": user_message}
     ]
     
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        response_format=schema
-    )
+    kwargs = {
+        "model": model,
+        "messages": messages,
+    }
+    
+    # 🌟 核心修改：支持动态 Schema
+    if schema:
+        kwargs["response_format"] = schema
+    else:
+        # OpenAI 规范：当不指定严格 schema 时，可通过 json_object 强制返回 JSON 格式
+        kwargs["response_format"] = {"type": "json_object"}
+
+    response = client.chat.completions.create(**kwargs)
 
     result = response.choices[0].message.content
     if strip_think:
         result = re.sub(r'<think>.*?</think>', '', str(result), flags=re.DOTALL)
     return result
 
-def get_LLM_message(system_content, user_message, model_id):
+def get_LLM_message(system_content, user_message, model_id, schema="default"):
     """
-    主路由函数：通过传入的 model_id，动态分发到对应的 API 请求逻辑
+    主路由函数：通过传入的 model_id，动态分发到对应的 API 请求逻辑。
+    可以通过传入 schema=None 来解除全局 Schema 限制。
     """
     configs = get_model_config()
     if model_id not in configs:
@@ -249,26 +259,29 @@ def get_LLM_message(system_content, user_message, model_id):
         
     config = configs[model_id]
     
+    # 🌟 动态决定使用哪个 Schema
+    active_schema = output_schema if schema == "default" else schema
+    
     if config['type'] == 'gemini':
         return gemini_chat(
             system_content=system_content, 
             user_message=user_message, 
             model=config['model'],
             api_key=config['api_key'],
-            is_vertex=config['is_vertex'], # 【核心修改】：将参数传给处理函数
+            is_vertex=config['is_vertex'], 
             use_tools=config['use_tools'],
-            schema=output_schema
+            schema=active_schema  # 使用动态 schema
         )
         
     elif config['type'] == 'openai':
         return openai_chat(
             system_content=system_content, 
             user_message=user_message, 
-            schema=output_schema,
+            schema=active_schema, # 使用动态 schema
             api_key=config['api_key'],
             base_url=config['base_url'],
             model=config['model'],
             strip_think=config['strip_think']
         )
     else:
-        raise ValueError(f"不支持的模型类型: {config['type']}")
+        raise ValueError(f"不支持的模型类型: {config['type']}")   
