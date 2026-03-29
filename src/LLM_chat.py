@@ -234,19 +234,21 @@ def openai_chat(system_content, user_message, schema, api_key, base_url, model, 
         "messages": messages,
     }
     
-    # 🌟 核心修改：支持动态 Schema
+    # 🌟 核心修复：如果传了 schema 就用 schema；如果没有传，干脆不写 response_format
+    # 这样完美避开本地 LM Studio/vLLM 报 400 格式错误的问题
     if schema:
         kwargs["response_format"] = schema
-    else:
-        # OpenAI 规范：当不指定严格 schema 时，可通过 json_object 强制返回 JSON 格式
-        kwargs["response_format"] = {"type": "json_object"}
 
-    response = client.chat.completions.create(**kwargs)
-
-    result = response.choices[0].message.content
-    if strip_think:
-        result = re.sub(r'<think>.*?</think>', '', str(result), flags=re.DOTALL)
-    return result
+    try:
+        response = client.chat.completions.create(**kwargs)
+        result = response.choices[0].message.content
+        
+        if strip_think:
+            result = re.sub(r'<think>.*?</think>', '', str(result), flags=re.DOTALL)
+        return result
+    except Exception as e:
+        # 如果依然报错，把详细错误抛出以便排查
+        raise Exception(f"OpenAI API 调用失败: {e}")
 
 def get_LLM_message(system_content, user_message, model_id, schema="default"):
     """

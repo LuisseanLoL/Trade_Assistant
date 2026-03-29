@@ -25,6 +25,7 @@ cache/
 
 portfolio.csv
 test.ipynb
+test.py
 
 # Jupyter Notebook 检查点
 .ipynb_checkpoints/

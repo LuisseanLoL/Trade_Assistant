@@ -5,17 +5,15 @@ import requests
 import fitz  # PyMuPDF
 import re
 from playwright.sync_api import sync_playwright
-
-# ==========================================
-# 🌟 修复点 1：加载 .env 环境变量
-# ==========================================
 from dotenv import load_dotenv
-load_dotenv() # 自动寻找项目根目录的 .env 文件并加载到系统环境变量中
+
+# 自动寻找项目根目录的 .env 文件并加载到系统环境变量中
+load_dotenv() 
 
 try:
     from src.LLM_chat import get_LLM_message
 except ImportError:
-    print("❌ 无法导入 LLM_chat.py，请确保该文件在同一目录下。")
+    print("❌ 无法导入 LLM_chat.py，请确保该文件在 src 目录下。")
     exit(1)
 
 def download_specific_report_api(stock_code: str, report_title_keyword: str, download_dir: str):
@@ -26,7 +24,6 @@ def download_specific_report_api(stock_code: str, report_title_keyword: str, dow
     file_name = f"{stock_code}_{report_title_keyword}.pdf".replace("*", "").replace("/", "")
     file_path = os.path.join(download_dir, file_name)
     
-    # PDF 缓存判断
     if os.path.exists(file_path):
         print(f"📦 [PDF 缓存命中] 发现本地文件，跳过下载: {file_path}")
         return file_path
@@ -48,15 +45,9 @@ def download_specific_report_api(stock_code: str, report_title_keyword: str, dow
             page.locator(".el-autocomplete-suggestion li").first.click()
             page.get_by_text(category, exact=True).click()
 
-            # ==========================================
-            # 🌟 修复点 2：自动点击展开日期，并选择“近3年”
-            # ==========================================
             try:
-                # 定位到那个包含了日期的框并点击
                 page.locator(".el-date-editor--daterange").first.click()
-                # 你的截图里左侧有个“近3年”，我们直接点击它
                 page.get_by_text("近3年", exact=True).click()
-                # 稍微等半秒钟，让前端页面把参数写进去
                 page.wait_for_timeout(500)
                 print("   ⏱️ 已自动将搜索时间范围扩大为: 近3年")
             except Exception as e:
@@ -97,35 +88,75 @@ def download_specific_report_api(stock_code: str, report_title_keyword: str, dow
             browser.close()
 
 def slice_financial_report_pdf(pdf_path: str, is_annual: bool) -> str:
-    """定向切片 PDF，提取核心文本以节省 Token"""
+    """
+    V3.0 广域提炼+智能降噪切片引擎：
+    扩大提取范围（含财务指标总结、重大事项、股东等），并用强力正则抹除无意义表格数据以保护本地显存。
+    """
     if not pdf_path or not os.path.exists(pdf_path): return ""
     
-    print(f"✂️ 正在切片解析 PDF: {os.path.basename(pdf_path)}")
+    print(f"✂️ 正在通过[广域降噪模式]切片解析 PDF: {os.path.basename(pdf_path)}")
     try:
         doc = fitz.open(pdf_path)
         extracted_text = []
         
-        if is_annual:
-            start_extracting = False
-            for page_num in range(min(150, len(doc))):
-                text = doc[page_num].get_text()
-                if "管理层讨论与分析" in text or "重要事项" in text:
-                    start_extracting = True
-                if "财务报告" in text and "审计报告" in text and page_num > 30:
-                    break
-                if start_extracting:
-                    extracted_text.append(text)
-        else:
-            for page_num in range(min(25, len(doc))):
-                extracted_text.append(doc[page_num].get_text())
-                
-        doc.close()
-        full_text = "\n".join(extracted_text)
-        full_text = re.sub(r'\n+', '\n', full_text)
+        # 匹配无意义表格残骸：纯数字、纯金额、纯百分比、日期、短横线、空括号
+        table_noise_pattern = re.compile(r'^[\s\d\.\,\%\-\(\)（）/]+$')
         
-        text_length = len(full_text)
-        print(f"✅ 切片完成，提取有效字符数: {text_length}")
-        return full_text[:80000] 
+        # 重点关注的章节标题锚点（用于在大模型阅读时给予提示）
+        core_keywords = ["主要财务数据", "管理层讨论与分析", "重要事项", "股份变动", "股东情况", "利润分配"]
+
+        found_stop_sign = False
+        # 财报真正有价值的文字通常在前100页内，后面的全是一望无际的财务报表附注
+        max_pages = min(120, len(doc)) if is_annual else min(30, len(doc))
+
+        for page_num in range(max_pages):
+            if found_stop_sign:
+                break
+
+            # 使用 blocks 模式，能更好地识别段落边界，而不是生硬地按行切断
+            blocks = doc[page_num].get_text("blocks")
+
+            for block in blocks:
+                # 排除图片等非文本 block
+                if block[6] != 0: continue
+
+                text = block[4].strip()
+                if not text: continue
+
+                # 清除段落内部不必要的换行符，合并为完整句子
+                text = re.sub(r'\s*\n\s*', '', text)
+                
+                # --- 1. 终点判定 ---
+                # 遇到“第十节 财务报告”或者“审计报告”全文时，说明高价值的文字叙述部分已经结束
+                if ("第十节" in text and "财务报告" in text) or ("审计报告" in text and page_num > 40):
+                    found_stop_sign = True
+                    extracted_text.append("\n【系统提示：后续为财务明细附注，已终止提取】\n")
+                    break
+
+                # --- 2. 章节高亮 ---
+                if len(text) < 25 and any(k in text for k in core_keywords):
+                    extracted_text.append(f"\n===== 【{text}】 =====\n")
+                    continue
+
+                # --- 3. 暴力降噪 ---
+                if len(text) < 4: continue # 过滤页码、字母等极短无用文本
+                if table_noise_pattern.match(text): continue # 过滤纯数字/财务表格噪音
+
+                # 通过重重筛选的，都是含有自然语言价值的长段落，保留！
+                extracted_text.append(text)
+
+        doc.close()
+        
+        # 组装最终文本并做最后的防爆显存安全截断
+        full_text = "\n".join(extracted_text)
+        # 将连续空行压缩为单行
+        full_text = re.sub(r'\n{2,}', '\n', full_text) 
+        
+        # 放宽限制：保留前 50000 字符。配合降噪，这 5万字的信息密度极高。
+        final_text = full_text[:50000]
+        
+        print(f"✅ 切片与降噪完成，高密度文本有效字符数: {len(final_text)}")
+        return final_text 
     except Exception as e:
         print(f"❌ PDF解析失败: {e}")
         return ""
@@ -151,6 +182,10 @@ def generate_report_summary_with_llm(current_text: str, prev_text: str, report_t
     "核心结论": "...",
     "原文摘录": "..."
   },
+  "重大事项及股东变动": {
+    "核心结论": "请重点提取涉诉、资产重组以及前十大股东的显著增减持情况...",
+    "原文摘录": "..."
+  },
   "战略及业绩兑现一致性评估": {
     "上期前瞻性指引与承诺": "...",
     "当期实际经营成果与兑现": "...",
@@ -160,19 +195,21 @@ def generate_report_summary_with_llm(current_text: str, prev_text: str, report_t
   }
 }
 """
-    user_prompt = f"【当前财报提取文本】:\n{current_text[:40000]}\n"
+    # 结合降噪切片，此处放入大模型的文本几乎全是干货
+    user_prompt = f"【当前财报提取文本】:\n{current_text}\n"
     if prev_text:
-        user_prompt += f"\n【上一年度财报提取文本(用于校验)】:\n{prev_text[:20000]}\n"
+        user_prompt += f"\n【上一年度财报提取文本(用于校验)】:\n{prev_text}\n"
 
     try:
         print("🤖 正在调用 LLM 进行财报深度阅读与战略一致性校验...")
-        # ⚠️ 注意这里：请确保 "kimi_k25" 是你在 .env 文件里配置过的 ACTIVE_MODELS 之一！
-        model_name_to_use = "kimi_k25"  
+        model_name_to_use = "qwen_9b"  
         
+        # 🌟 核心修复：传入 schema=None 避免被主交易逻辑的 JSON 约束覆盖导致解析报错！
         result = get_LLM_message(
             system_content=sys_prompt, 
             user_message=user_prompt, 
-            model_id=model_name_to_use
+            model_id=model_name_to_use,
+            schema=None
         )
         return result
     except Exception as e:
@@ -212,27 +249,19 @@ def process_pipeline(stock_code: str, stock_name: str, latest_report_date: str) 
 
 
 if __name__ == "__main__":
-    stock_code = "000001"
-    stock_name = "平安银行"
-    latest_report_date = "20251231" 
+    stock_code = "600600"
+    stock_name = "青岛啤酒"
+    latest_report_date = "20251231"
     
     os.makedirs("log/financial_pdfs", exist_ok=True)
 
     print("\n" + "="*50)
-    print("🛠️ 【第一轮测试】：模拟新财报发布，执行全量下载与分析")
+    print("🛠️ 【全景财报排雷测试】：模拟新财报发布，执行广域下载与分析")
     print("="*50)
     t1_start = time.time()
     result_1 = process_pipeline(stock_code, stock_name, latest_report_date)
     t1_end = time.time()
-    print(f"\n✅ 第一轮完成，总耗时: {t1_end - t1_start:.2f} 秒\n")
+    print(f"\n✅ 测试完成，总耗时: {t1_end - t1_start:.2f} 秒\n")
 
-    print("\n" + "="*50)
-    print("⚡ 【第二轮测试】：验证 PDF 缓存机制！(应该瞬间跳过网络下载)")
-    print("="*50)
-    t2_start = time.time()
-    result_2 = process_pipeline(stock_code, stock_name, latest_report_date)
-    t2_end = time.time()
-    
-    print(f"\n✅ 第二轮完成，总耗时: {t2_end - t2_start:.2f} 秒")
     print("\n大模型返回的 JSON 分析结果如下：\n")
-    print(result_2)
+    print(result_1)
