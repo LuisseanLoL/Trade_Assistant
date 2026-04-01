@@ -6,6 +6,7 @@ import pandas as pd
 import glob
 import re
 import json_repair
+import plotly.subplots as sp
 
 # 导入在 utils.py 里写好的高级画图引擎
 from src.utils import create_advanced_kline_fig
@@ -42,71 +43,152 @@ def get_index_kline_fig():
             
     return go.Figure()
 
+def get_mini_index_fig():
+    """专为大盘面板定制的轻量级 K 线图（修复 A 股红绿习惯）"""
+    files = glob.glob("log/index_data/sh000001_daily_*.csv")
+    if files:
+        try:
+            df = pd.read_csv(max(files)).tail(120) 
+            df['date'] = df['date'].astype(str)
+            
+            fig = sp.make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.75, 0.25], vertical_spacing=0.02)
+            
+            # 成交量颜色 (红涨绿跌)
+            colors = ['#2f9e44' if row['close'] < row['open'] else '#f03e3e' for _, row in df.iterrows()]
+            
+            # 🌟 修复 1：强制设定 K 线的 A 股红绿配色
+            fig.add_trace(go.Candlestick(
+                x=df['date'], open=df['open'], high=df['high'], low=df['low'], close=df['close'], 
+                increasing_line_color='#f03e3e', increasing_fillcolor='#f03e3e', # 涨为红
+                decreasing_line_color='#2f9e44', decreasing_fillcolor='#2f9e44', # 跌为绿
+                name='上证'
+            ), row=1, col=1)
+            
+            df['MA20'] = df['close'].rolling(20).mean()
+            fig.add_trace(go.Scatter(
+                x=df['date'], y=df['MA20'], line=dict(color='#4c6ef5', width=1.5), name='MA20'
+            ), row=1, col=1)
+            
+            fig.add_trace(go.Bar(
+                x=df['date'], y=df['volume'], marker_color=colors, name='成交量'
+            ), row=2, col=1)
+            
+            fig.update_layout(
+                autosize=True, showlegend=False, 
+                margin=dict(l=35, r=10, t=10, b=0),
+                xaxis_rangeslider_visible=False,
+                plot_bgcolor="#ffffff", paper_bgcolor="#ffffff"
+            )
+            
+            fig.update_xaxes(type='category', showticklabels=False, row=1, col=1)
+            fig.update_xaxes(type='category', showticklabels=False, row=2, col=1)
+            fig.update_yaxes(showgrid=True, gridcolor='#f1f3f5')
+            
+            return fig
+        except Exception as e: 
+            print(f"大盘绘图错误: {e}")
+            pass
+            
+    return go.Figure()
+
 def parse_and_build_macro_ui(input_text):
-    """解析大盘宏观文本并构建对应的 UI 面板"""
-    macro_dict = {}
-    if "【宏观大盘环境】" in input_text:
-        block = input_text.split("【宏观大盘环境】")[1].split("======")[0]
-        for line in block.split('\n'):
-            if ':' in line or '：' in line:
-                k, v = re.split(r'[:：]', line, 1)
-                macro_dict[k.strip()] = v.strip()
+    """解析大盘宏观文本并构建对应的 UI 面板（修复截断与逻辑）"""
     
-    idx_val = macro_dict.get("上证指数", "-").split('(')[0].strip()
-    trend = macro_dict.get("大盘趋势", "-").split('(')[0].strip()
-    rsi = macro_dict.get("情绪指标(RSI14)", "-").split('(')[0].strip()
-    z_score = macro_dict.get("偏离度(Z-Score)", "-").split('(')[0].strip()
+    def safe_extract(pattern, default="-"):
+        match = re.search(pattern, input_text)
+        return match.group(1).strip() if match else default
+
+    idx_val  = safe_extract(r"上证指数\s*([\d\.]+)")
+    trend    = safe_extract(r"趋势与量能[：:]\s*(.*?)[（\(；。]")
+    vol_ratio = safe_extract(r"均量的\s*([\d\.]+%?)")
     
-    # --- 计算大盘动态颜色 ---
-    trend_color = "#2d3748"
-    if "多头" in trend or "偏多" in trend:
-        trend_color = "#f03e3e" # 红色
-    elif "空头" in trend or "偏空" in trend:
-        trend_color = "#2f9e44" # 绿色
-        
+    pe_pct   = safe_extract(r"近10年\s*([\d\.]+)%\s*分位")
+    pe_status= safe_extract(r"分位，(.*?)）")
+    pe_combined = f"{pe_pct}%" + (f"({pe_status})" if pe_status != "-" else "")
+
+    rsi      = safe_extract(r"RSI14=([\d\.]+)")
+    bond     = safe_extract(r"十年期国债收益率[：:]\s*([\d\.]+%?)")
+    if_change = safe_extract(r"IF主力基差.*?较昨日([^\)）;；]+)")
+
+    # 🌟 修复 2.1：精简长线牛熊的文本，防止截断
+    bull_match = re.search(r"牛熊分界线.*?[上下]", input_text)
+    if bull_match:
+        bull_bear = bull_match.group(0).replace("(MA200)", "").replace("（MA200）", "")
+    else:
+        bull_bear = "-"
+
+    # 🌟 修复 2.2：修复布林带空间的提取逻辑，处理复杂括号
+    bb_match = re.search(r"布林极限%b.*?[\(（](.*?)[,，;；\n]", input_text)
+    if bb_match:
+        bb_status = bb_match.group(1).rstrip(')）').strip()
+        if '(' in bb_status and ')' not in bb_status: bb_status += ')'
+        if '（' in bb_status and '）' not in bb_status: bb_status += '）'
+    else:
+        bb_status = "-"
+
+    # --- 颜色计算引擎 ---
+    def smart_color(text, red_words, green_words):
+        if any(w in text for w in red_words): return "#f03e3e"
+        if any(w in text for w in green_words): return "#2f9e44"
+        return "#2d3748"
+
+    trend_color = smart_color(trend, ["多头", "偏多", "向上"], ["空头", "偏空", "向下", "跌破"])
+    bb_color    = smart_color(bb_status, ["下轨", "支撑", "超卖"], ["上轨", "压力", "超买"])
+    bb_color    = "#e64980" if "支撑" in bb_status else bb_color 
+    bull_color  = smart_color(bull_bear, ["之上", "多头"], ["之下", "空头"])
+    if_color    = smart_color(if_change, ["走强", "收敛", "做多"], ["走弱", "扩大", "做空"])
+    pe_color    = "#f59f00" if "高估" in pe_status else "#f03e3e" if "低估" in pe_status else "#2d3748"
+    
+    # 🌟 修复 3：量能比以 100% 为分水岭
+    vol_color = "#2d3748"
+    try:
+        val = float(vol_ratio.strip('%'))
+        if val >= 100: vol_color = "#f03e3e"  # 正常放量及以上显示红色
+        elif val < 100: vol_color = "#2f9e44" # 缩量显示绿色
+    except: pass
+
     rsi_color = "#2d3748"
     try:
-        rsi_num = float(re.sub(r'[^\d\.-]', '', rsi))
+        rsi_num = float(rsi)
         if rsi_num > 70: rsi_color = "#f03e3e"
         elif rsi_num < 30: rsi_color = "#2f9e44"
     except: pass
-    
-    z_color = "#2d3748"
-    try:
-        z_num = float(re.sub(r'[^\d\.-]', '', z_score))
-        if z_num > 2: z_color = "#f03e3e"
-        elif z_num < -2: z_color = "#2f9e44"
-    except: pass
-    
+
+    # --- UI 构建部分保持不变 ---
     def mini_kpi(label, val, color="#495057"):
         return html.Div([
-            html.Div(label, style={"fontSize": "0.7rem", "color": "#868e96"}),
-            html.Div(val, style={"fontSize": "0.95rem", "fontWeight": "bold", "color": color})
+            html.Div(label, style={"fontSize": "0.65rem", "color": "#868e96", "whiteSpace": "nowrap"}),
+            html.Div(val, style={"fontSize": "0.8rem", "fontWeight": "bold", "color": color, "whiteSpace": "nowrap", "overflow": "hidden", "textOverflow": "ellipsis"})
         ], style={"backgroundColor": "#f8f9fa", "padding": "4px", "borderRadius": "4px", "textAlign": "center"})
 
-    # 【终极自适应方案】：使用 position: relative + absolute 强制 Plotly 填满 Flex 剩余空间
     return html.Div([
-        
-        # 上半部分：图表区（自适应撑满）
         html.Div(
             dcc.Graph(
-                figure=get_index_kline_fig(), 
-                # 必须开启 responsive=True 让 Plotly 监听容器形变
+                figure=get_mini_index_fig(), 
                 config={'displayModeBar': False, 'responsive': True}, 
-                # 绝对定位，强制宽高 100% 贴合父容器
                 style={"position": "absolute", "top": 0, "left": 0, "width": "100%", "height": "100%"}
             ),
-            # flexGrow: 1 负责抢占剩下的所有高度，position: relative 为内部的绝对定位提供锚点
-            style={"flexGrow": 1, "position": "relative", "minHeight": "200px"}
+            style={"flexGrow": 1, "position": "relative", "minHeight": "180px"}
         ),
         
-        # 下半部分：固定数据区（不参与压缩）
         html.Div([
-            dbc.Row([dbc.Col(mini_kpi("上证指数", idx_val, "#f03e3e"), width=6, className="pe-1"), dbc.Col(mini_kpi("大盘趋势", trend, trend_color), width=6, className="ps-1")], className="mb-1"),
-            dbc.Row([dbc.Col(mini_kpi("RSI情绪", rsi, rsi_color), width=6, className="pe-1"), dbc.Col(mini_kpi("偏离度", z_score, z_color), width=6, className="ps-1")]),
-        ], style={"flexShrink": 0, "marginTop": "10px"})
+            dbc.Row([
+                dbc.Col(mini_kpi("上证指数", idx_val, "#f03e3e"), width=4, className="px-1"), 
+                dbc.Col(mini_kpi("大盘趋势", trend, trend_color), width=4, className="px-1"),
+                dbc.Col(mini_kpi("量能均值比", vol_ratio, vol_color), width=4, className="px-1")
+            ], className="mb-1 mx-0"),
+            dbc.Row([
+                dbc.Col(mini_kpi("长线牛熊", bull_bear, bull_color), width=4, className="px-1"),
+                dbc.Col(mini_kpi("布林空间", bb_status, bb_color), width=4, className="px-1"), 
+                dbc.Col(mini_kpi("RSI情绪", rsi, rsi_color), width=4, className="px-1")
+            ], className="mb-1 mx-0"),
+            dbc.Row([
+                dbc.Col(mini_kpi("A股估值水位", pe_combined, pe_color), width=4, className="px-1"),
+                dbc.Col(mini_kpi("期指边际变化", if_change, if_color), width=4, className="px-1"),
+                dbc.Col(mini_kpi("10年期国债", bond, "#845ef7"), width=4, className="px-1")
+            ], className="mx-0")
+        ], style={"flexShrink": 0, "marginTop": "8px"})
         
-    # 外层卡片高度设为 100%（跟随你在 app.py 里的 400px），并使用 flex 纵向排布
     ], style={"height": "100%", "minHeight": "360px", "display": "flex", "flexDirection": "column"})
 
 def parse_and_build_fin_and_quant_ui(input_text):
