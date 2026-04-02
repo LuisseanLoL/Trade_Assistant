@@ -124,7 +124,7 @@ output_schema = {
 with open('LLM system content.txt', 'r', encoding='utf-8') as file:
     system_content = file.read()
 
-with open(r'test\input.txt', 'r', encoding='utf-8') as file:
+with open(r'examples\sample_input.txt', 'r', encoding='utf-8') as file:
     user_message = file.read()
 
 
