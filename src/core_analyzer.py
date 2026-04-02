@@ -16,27 +16,27 @@ from src.financial_analyzer import process_pipeline
 def run_core_analysis(
     stock_code, position, cost, current_date_str,
     flash_model, use_pro, pro_model, dual_filter,
-    use_moa, committee_agents, committee_model=None
+    use_moa, committee_agents, committee_model=None,
+    set_progress=None
 ):
     """
     统一的核心分析引擎，供 UI (app.py) 和 批处理 (worker.py) 调用。
     返回: df_chart, stock_name, stock_price, parsed_json, disp_model, user_msg, result_text
     """
-    # 如果没有指定议事模型，默认用初筛模型
     if not committee_model:
         committee_model = flash_model
         
-    c_date = datetime.strptime(current_date_str, "%Y-%m-%d").date() # 加上 .date() 剥离多余的时间信息
-    end = c_date.strftime("%Y%m%d") # 直接使用 strftime，比 isoformat 替换更安全
+    c_date = datetime.strptime(current_date_str, "%Y-%m-%d").date() 
+    end = c_date.strftime("%Y%m%d") 
     beg = (c_date - timedelta(days=720)).strftime("%Y%m%d")
 
-    # ================= 统一接管 BaoStock 登录 =================
+    if set_progress: set_progress("🔍 步骤 1/5: 正在连接数据源获取基础行情与量价数据...")
+    
     bs.login()
     try:
         s_name = get_stock_name_bs(stock_code)
         safe_s_name = re.sub(r'[\\/:*?"<>|]', '', s_name) 
         
-        # 1. 组装数据 (统一使用 app.py 的最新逻辑)
         df_chart = get_chart_data(stock_code, beg, end)
         df_30m = get_30m_chart_data(stock_code, beg, end)
 
@@ -52,10 +52,9 @@ def run_core_analysis(
         in_str = get_stock_data(stock_code=stock_code, beg=beg, end=end, current_date=current_date_str)
         
     finally:
-        # ================= 统一接管 BaoStock 登出 =================
         bs.logout()
         
-    # 新闻获取不需要 bs 登录，可以放在外面
+    if set_progress: set_progress("📰 步骤 2/5: 正在全网抓取最新市场新闻与宏观情绪...")
     news_titles = fetch_news_safely(stock_code, safe_s_name, current_date_str)
     
     if not df_chart.empty:
@@ -65,17 +64,14 @@ def run_core_analysis(
         df_monthly = df_monthly_tmp.groupby('year_month').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'}).reset_index()
         df_monthly.rename(columns={'year_month': 'date'}, inplace=True)
         df_monthly['date'] = df_monthly['date'].astype(str)
-        # ======== 新增：压缩与简化月K线价格和交易量 ========
-        # 1. 将开盘、最高、最低、收盘价保留2位小数
+        
         for col in ['open', 'high', 'low', 'close']:
             if col in df_monthly.columns:
                 df_monthly[col] = df_monthly[col].apply(lambda x: f"{float(x):.2f}" if pd.notna(x) else x)
         
-        # 2. 调用已导入的 format_large_number 将交易量转换为 万/亿
         if 'volume' in df_monthly.columns:
             df_monthly['volume'] = df_monthly['volume'].apply(format_large_number)
-        # ====================================================
-
+            
         monthly_str = df_monthly.tail(24).to_markdown(index=False)
     else:
         monthly_str = "暂无"
@@ -85,13 +81,11 @@ def run_core_analysis(
     if not df_30m.empty:
         df_30m_tmp = df_30m.copy()
         
-        # 格式化 time 列：取字符串的第8-9位(时)和第10-11位(分)，中间加冒号
         if 'time' in df_30m_tmp.columns:
             df_30m_tmp['time'] = df_30m_tmp['time'].astype(str).apply(
                 lambda x: f"{x[8:10]}:{x[10:12]}" if len(x) >= 12 else x
             )
             
-        # 格式化 amount 列：调用刚才导入的 format_large_number
         if 'amount' in df_30m_tmp.columns:
             df_30m_tmp['amount'] = df_30m_tmp['amount'].apply(format_large_number)
             
@@ -134,7 +128,8 @@ def run_core_analysis(
     res_text = ""
     model_tag = flash_model
     
-    # 2. 第一阶段：过滤/初筛阶段
+    if set_progress: set_progress(f"🧠 步骤 3/5: 正在请求基础模型 ({flash_model}) 进行初筛逻辑推演...")
+    
     if use_pro and dual_filter:
         if float(position) > 0: 
             run_pro = True
@@ -153,32 +148,25 @@ def run_core_analysis(
     else:
         res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=flash_model)
 
-    # ==========================================
-    # 🌟 新增：2.5 阶段：深度财报研读 (仅在进入决议阶段时触发)
-    # ==========================================
     if run_pro:
+        if set_progress: set_progress("📊 阶段触发: 进入高级决议圈，正在进行深度财报研读...")
         print(f"\n🎯 [{stock_code}] {s_name} 进入高级决议圈，触发大模型深度财报研读...")
         try:
-            # 利用正则从 data_crawler 拼接的 user_msg 中提取“最新财务报告期” (例如：2024-09-30)
             match = re.search(r"最新财务报告期:\s*([0-9\-]+)", in_str)
             if match:
-                # 转成 '20240930' 格式传给分析器
                 report_date_raw = match.group(1).replace("-", "").strip() 
-                
-                # 调用财报分析器（自带双重缓存）
                 fin_summary = process_pipeline(stock_code, safe_s_name, report_date_raw)
                 
                 if fin_summary:
-                    # 将极其重要的财报总结追加到发送给高阶大师的 user_msg 尾部
                     user_msg += f"\n\n=================================\n### 【大模型深度财报解析与战略一致性校验】\n{fin_summary}\n"
             else:
                 print("   ⚠️ 无法在原文中提取到财报日期，跳过财报解析。")
         except Exception as e:
             print(f"   ⚠️ 财报研读模块调用失败，已跳过: {e}")
 
-    # 3. 第二阶段：高级决议阶段 (MoA vs 单模型)
     if run_pro: 
         if use_moa and committee_agents:
+            if set_progress: set_progress(f"👥 步骤 4/5: 正在呼叫 {len(committee_agents)} 位投资大师模型并发分析...")
             committee_results = {}
             format_idx = sys_content.find("【决策过程与输出规范】")
             format_rules = sys_content[format_idx:] if format_idx != -1 else sys_content
@@ -192,9 +180,6 @@ def run_core_analysis(
                 except Exception as e:
                     return f"该大师 ({agent_name}) 分析失败：{e}"
 
-            # ==========================================
-            # 🌟 新增：大师团并发调用提示与计时
-            # ==========================================
             print(f"⏳ 开始呼叫 {len(committee_agents)} 位投资大师模型并发分析 (底层模型: {committee_model})...")
             committee_start_time = time.time()
 
@@ -205,7 +190,6 @@ def run_core_analysis(
                     display_name = agent_name.replace("_", " ")
                     try:
                         committee_results[agent_name] = future.result()
-                        # 新增：单个大师完成时的实时进度提示
                         print(f"   ✅ 大师 [{display_name}] 意见已送达！")
                     except Exception as e:
                         committee_results[agent_name] = f"该大师分析失败：{e}"
@@ -221,6 +205,7 @@ def run_core_analysis(
                 
             judge_msg += "作为量化基金的投资总监，你拥有最终拍板权。请严格按照以下【核心裁判原则】进行综合决策：\n1. 事实核查先行（零容忍数据幻觉）：必须先核对大师引用的数据是否与上文提供的【客观标的数据】完全一致。对于任何基于虚构数据得出的结论，必须直接一票否决。\n2. 寻找非共识的正确与流派交叉验证：重点审视大师之间的【分歧点】。例如，当价值派（如巴菲特）与趋势派（如利弗莫尔）在特定点位达成共识时，该决策置信度极高；若出现严重分歧，需判断当前市场环境更适用哪种流派。\n3. 拒绝无效瘫痪（果断决策）：不要因为存在分歧就本能地退缩到‘观望’。在剔除幻觉意见后，评估盈亏比，勇敢给出具体的买入/卖出、观望指令和点位。\n4. 资金面数据的辩证看待：资金流向是重要的辅助验证工具，但【绝非所有策略的硬性前提】。如果是左侧深度价值潜伏，主力资金未明显介入甚至流出是完全正常的；如果是右侧主升浪突破，则需要资金合力。切勿因为缺乏明显的资金净流入，就教条式地否决优秀的左侧或长线基本面机会。\n\n请给出最终决策。你必须在 JSON 的 '原因' 字段中分段输出：\n【事实核查与幻觉剔除】：简述是否有大师引用了错误数据。\n【大师观点交锋】：简述各流派有效观点的交锋与共鸣点。\n【总监拍板逻辑】：详细说明你最终的综合裁决理由。\n注意：你的输出必须是一个单一的、严格符合原定系统提示词规范的 JSON 对象！\n"
 
+            if set_progress: set_progress(f"⚖️ 步骤 5/5: 正在呼叫总监模型 ({pro_model}) 进行最终综合裁决...")
             print(f"⏳ 开始呼叫总监模型: {pro_model}...")
             start_time = time.time()
             res_text = get_LLM_message(system_content=sys_content, user_message=judge_msg, model_id=pro_model)
@@ -228,10 +213,10 @@ def run_core_analysis(
             model_tag = f"MoA-{len(committee_agents)}大师-{pro_model}"
             
         else:
+            if set_progress: set_progress(f"⚖️ 步骤 4/4: 正在呼叫 Pro 模型 ({pro_model}) 进行深度推演...")
             res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=pro_model)
             model_tag = f"D-{flash_model}-{pro_model}" if dual_filter else pro_model
 
-    # 4. 落地保存
     model_configs = get_model_config()
     if model_tag.startswith("MoA-"):
         parts = model_tag.split("-")
@@ -256,7 +241,6 @@ def run_core_analysis(
             rr_str = f"{(float(sell_p) - float(buy_p)) / (float(buy_p) - float(stop_p)):.2f}:1"
     except: pass
 
-    # 写 CSV 记录
     csv_path = f"output/{current_date_str}/Daily Table_{current_date_str}.csv"
     pd.DataFrame([{
         "股票代码": stock_code, "股票名称": s_name, "决策模型": disp_model, "当前价格": s_price, 

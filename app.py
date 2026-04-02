@@ -24,7 +24,6 @@ logging.getLogger("openai").setLevel(logging.WARNING)
 load_dotenv()
 
 # ================= 导入内部模块 =================
-# 注意：大部分数据爬取逻辑已下放到 core_analyzer 中，app.py 仅保留历史记录查看所需的基础绘图库
 from src.data_crawler import get_chart_data  
 from src.LLM_chat import get_model_config
 from src.utils import (
@@ -36,7 +35,6 @@ from src.utils import (
     create_advanced_kline_fig,
 )
 from src.ui_components import parse_and_build_macro_ui, parse_and_build_fin_and_quant_ui
-# 🌟 引入全新重构的分析引擎
 from src.core_analyzer import run_core_analysis
 
 # ==========================================
@@ -69,7 +67,6 @@ def get_agent_options():
 
 AGENT_OPTIONS = get_agent_options()
 
-# 针对 A 股市场特色精选的 11 位默认参会大师
 default_agent_names = [
     "A_Share_Hot_Money", "Richard_Wyckoff", "Jesse_Livermore", 
     "William_O'Neil", "Peter_Lynch", "George_Soros", "Howard_Marks",
@@ -77,17 +74,14 @@ default_agent_names = [
 ]
 default_agents = [opt['value'] for opt in AGENT_OPTIONS if opt['value'] in default_agent_names]
 
-# Initialize the long callback manager
 cache = diskcache.Cache("./cache")
-
-# 🌟 注意这里名字变短了，去掉了 LongCallback
 background_callback_manager = DiskcacheManager(cache)
 
 app = dash.Dash(
     __name__, 
     external_stylesheets=[dbc.themes.LUMEN, dbc.icons.FONT_AWESOME], 
     prevent_initial_callbacks="initial_duplicate",
-    background_callback_manager=background_callback_manager # 新增这行
+    background_callback_manager=background_callback_manager
 )
 app.title = "AI Trade Assistant"
 
@@ -95,7 +89,6 @@ sidebar = html.Div([
     html.Div([html.I(className="fa-solid fa-chart-line me-2", style={"color": "#4a5568", "fontSize": "1.3rem"}), html.Span("AI Trade Assistant", style={"fontWeight": "900", "fontSize": "1.1rem", "color": "#2d3748", "letterSpacing": "-0.5px"})], className="d-flex align-items-center mb-4"),
     
     html.Div([
-        # --- 标的配置 ---
         html.H6("标的配置", className="text-muted fw-bold mb-2", style={"fontSize": "0.8rem", "letterSpacing": "1px"}),
         html.Label("股票代码", className="small fw-bold text-secondary mb-1"),
         dbc.InputGroup([dbc.Input(id="input-stock-code", type="text", placeholder="输入代码...", size="sm"), dbc.Button(html.I(className="fa-solid fa-dice"), id="btn-random", color="light", title="随机抽取", size="sm")], className="mb-2"),
@@ -108,7 +101,6 @@ sidebar = html.Div([
         html.Label("持仓成本", className="small fw-bold text-secondary mb-1"),
         dbc.Input(id="input-cost", type="number", value=0, className="mb-3", size="sm"),
 
-        # --- 模型架构解耦配置 ---
         html.H6("流水线模型配置", className="text-muted fw-bold mb-2", style={"fontSize": "0.8rem", "letterSpacing": "1px"}),
         html.Label("1. 基础/初筛模型 (Actor)", className="small fw-bold text-secondary mb-1"),
         dbc.Select(id="dropdown-flash-model", options=MODEL_OPTIONS, value=default_flash_model, className="mb-2", size="sm"), # type: ignore
@@ -119,7 +111,6 @@ sidebar = html.Div([
 
         dbc.Checklist(options=[{"label": "3. 启用双重筛选过滤", "value": 1}], value=[], id="switch-dual-filter", switch=True, className="mb-2 text-secondary small fw-bold"),
 
-        # --- 多 Agent 议事配置 ---
         html.Hr(style={"margin": "10px 0", "opacity": "0.15"}),
         html.H6("多大师议事会 (MoA)", className="text-muted fw-bold mb-2", style={"fontSize": "0.8rem", "letterSpacing": "1px", "color": "#e64980"}),
         dbc.Checklist(options=[{"label": "启用 AI 裁判委员会", "value": 1}], value=[1], id="switch-use-moa", switch=True, className="mb-1 text-secondary small fw-bold"),
@@ -138,7 +129,14 @@ def create_stat_card(title, value_id, color):
     ], style={"backgroundColor": "#ffffff", "borderRadius": "6px", "boxShadow": "0 1px 4px rgba(0, 0, 0, 0.03)", "padding": "8px", "height": "100%", "minWidth": "90px"}), className="col px-1")
 
 content = html.Div([
-    dcc.Loading(id="loading-main", type="circle", color="#4c6ef5", children=[
+    # ================== 【新增】运行状态提示区 ==================
+    html.Div([
+        dbc.Progress(id="running-progress", value=100, striped=True, animated=True, style={"height": "4px", "display": "none"}, className="mb-1"),
+        html.Div(id="progress-msg", style={"display": "none", "fontSize": "0.85rem", "color": "#4c6ef5", "fontWeight": "bold", "marginBottom": "10px", "textAlign": "center"})
+    ]),
+    # ============================================================
+
+    html.Div([
         html.Div([
             html.Div([
                 html.H5("股票智能决策面板", className="fw-bold mb-1", style={"color": "#2d3748", "fontSize": "1.1rem", "whiteSpace": "nowrap"}),
@@ -159,7 +157,6 @@ content = html.Div([
             ], style={"flexGrow": 1, "overflow": "hidden"})
         ], className="d-flex align-items-center mb-2", style={"width": "100%"}),
         
-        # ================== 【新增】周期与策略展示卡片 ==================
         dbc.Card([
             dbc.CardBody([
                 html.Div([
@@ -169,7 +166,6 @@ content = html.Div([
                 ])
             ], style={"padding": "10px 15px"})
         ], style=CARD_STYLE, className="mb-2"),
-        # ============================================================
 
         dbc.Row([
             dbc.Col(dbc.Card([dbc.CardBody([html.H6("实时走势与决策标线", className="fw-bold mb-1", style={"color": "#495057", "fontSize": "0.85rem"}), dcc.Graph(id="main-chart", style={"height": "460px"})], style={"padding": "10px"})], style=CARD_STYLE), width=9),
@@ -247,7 +243,6 @@ def handle_random_pick(n_clicks):
     prevent_initial_call=True
 )
 def sync_exclusive_switches(moa_val, dual_val):
-    """确保 'MoA 大师议事' 和 '双重筛选' 逻辑互斥"""
     ctx = dash.callback_context
     if not ctx.triggered: return dash.no_update, dash.no_update
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
@@ -267,7 +262,7 @@ def update_table(active_tab): return load_daily_table_by_date(active_tab) if act
     [Output("main-chart", "figure"), Output("out-stock-name", "children"),
      Output("out-action", "children"), Output("out-expectation", "children"), Output("out-position", "children"), Output("out-confidence", "children"),
      Output("out-buy-price", "children"), Output("out-sell-price", "children"), Output("out-stop-price", "children"), Output("out-model-name", "children"),
-     Output("out-cycle-strategy", "children"), # <---- 【新增】输出周期与策略
+     Output("out-cycle-strategy", "children"), 
      Output("out-reasoning", "children"), Output("out-news", "children"), 
      Output("out-macro", "children"), Output("out-financial", "children"), Output("out-quant", "children"), 
      Output("date-tabs", "children"), Output("date-tabs", "active_tab", allow_duplicate=True), Output("daily-table", "data", allow_duplicate=True)], 
@@ -277,16 +272,19 @@ def update_table(active_tab): return load_daily_table_by_date(active_tab) if act
      State("switch-use-moa", "value"), State("dropdown-committee-agents", "value"), 
      State("input-position", "value"), State("input-cost", "value"), State("daily-table", "derived_viewport_data"), State("date-tabs", "active_tab")],
     prevent_initial_call=True,
-    background=True,  # 🌟 关键：开启后台运行
+    background=True, 
     manager=background_callback_manager,
     running=[
-        (Output("btn-analyze", "disabled"), True, False), # 运行时禁用按钮，运行完恢复
-        (Output("btn-analyze", "children"), "大脑飞速运转中...", "开始分析"), # 更改按钮文字
-    ]
+        (Output("btn-analyze", "disabled"), True, False), 
+        (Output("btn-analyze", "children"), html.Span([html.I(className="fa-solid fa-spinner fa-spin me-2"), "推演中..."]), "开始分析"), 
+        (Output("running-progress", "style"), {"height": "4px", "display": "block"}, {"height": "4px", "display": "none"}),
+        (Output("progress-msg", "style"), {"display": "block", "fontSize": "0.85rem", "color": "#4c6ef5", "fontWeight": "bold", "marginBottom": "10px", "textAlign": "center"}, {"display": "none"}),
+    ],
+    progress=[Output("progress-msg", "children")], 
+    progress_default="准备启动分析引擎..."
 )
-def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_pro_switch, pro_model, dual_filter_switch, moa_switch, committee_agents, position, cost, table_data, active_tab):
+def unified_action_handler(set_progress, n_clicks, active_cell, stock_code, flash_model, use_pro_switch, pro_model, dual_filter_switch, moa_switch, committee_agents, position, cost, table_data, active_tab):
     ctx = dash.callback_context
-    # 【修改】：返回值数量增加到 19 个
     if not ctx.triggered: return [dash.no_update] * 19
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
@@ -295,7 +293,6 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
     use_moa = bool(moa_switch)
     committee_agents = committee_agents if committee_agents else []
 
-    # UI 辅助函数
     def get_display_model_name(tag):
         if not tag: return "-"
         if tag.startswith("MoA-"):
@@ -335,10 +332,11 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
         except Exception: pass
         return str(target_p)
     
-    # ================= 分支 1：点击历史记录表查看详情 =================
     if trigger_id == 'daily-table':
-        # 【修改】：返回值数量增加到 19 个
         if not active_cell or active_cell['column_id'] != '详情': return [dash.no_update] * 19
+        
+        set_progress("正在从本地读取历史决策日志与行情数据...")
+        
         row_data = table_data[active_cell['row']]
         h_stock, h_date, h_stock_name = row_data['股票代码'], active_tab, row_data.get('股票名称', '未知')
         
@@ -359,7 +357,6 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
         
         beg, end = (datetime.strptime(h_date, "%Y-%m-%d") - timedelta(days=180)).strftime("%Y%m%d"), h_date.replace('-', '')
         
-        # 历史记录回看需要调用爬虫复现图表
         df_chart = get_chart_data(h_stock, beg, end)
         fig = create_advanced_kline_fig(df_chart)
         
@@ -374,17 +371,16 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
         stop_display = get_price_display(stop_p, buy_p)
         buy_display = str(buy_p) if buy_p else "-"
         
-        # 【修改】：增加了 parsed.get("cycle_strategy", "-") 的输出位置
         return fig, f"{h_stock_name} ({h_stock})", format_dynamic_color(parsed.get("action"), True), format_dynamic_color(parsed.get("expectation"), False), parsed.get("pos_adv"), parsed.get("confidence"), buy_display, sell_display, stop_display, disp_model, parsed.get("cycle_strategy", "-"), parsed.get("reasoning"), news_t, macro_ui, fin_ui, quant_ui, dash.no_update, dash.no_update, dash.no_update
 
-    # ================= 分支 2：点击“开始分析”触发核心引擎 =================
-    # 【修改】：返回值数量增加到 19 个
     if not stock_code: return [dash.no_update] * 19
+    
+    set_progress(f"正在初始化分析引擎，目标标的：{stock_code}...")
+    
     c_date = get_logical_date()
     c_str = c_date.strftime("%Y-%m-%d")
     stock_code = stock_code.strip()
 
-    # 🌟 直接调用 core_analyzer.py 中统一的核心方法
     df_chart, s_name, s_price, parsed, disp_model, user_msg, res_text = run_core_analysis(
         stock_code=stock_code,
         position=position,
@@ -396,10 +392,12 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
         dual_filter=dual_filter,
         use_moa=use_moa,
         committee_agents=committee_agents,
-        committee_model=flash_model  # 在 UI 中默认复用初筛模型作为议事模型
+        committee_model=flash_model,
+        set_progress=set_progress
     )
 
-    # UI 绘图与解析
+    set_progress("分析完毕！正在渲染数据与交互图表...")
+
     fig = create_advanced_kline_fig(df_chart)
     buy_p, sell_p, stop_p = parsed.get("buy_p") or parsed.get("建议买入价"), parsed.get("sell_p") or parsed.get("目标卖出价"), parsed.get("stop_p") or parsed.get("建议止损价")
     
@@ -408,16 +406,13 @@ def unified_action_handler(n_clicks, active_cell, stock_code, flash_model, use_p
         if sell_p and str(sell_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(sell_p), line_dash="dot", line_color="#f03e3e", annotation_text="目标", row=1, col=1) # type: ignore
         if stop_p and str(stop_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(stop_p), line_dash="dot", line_color="#37b24d", annotation_text="止损", row=1, col=1) # type: ignore
 
-    # 渲染子 UI 组件
     macro_ui = parse_and_build_macro_ui(user_msg)
     fin_ui, quant_ui, news_t = parse_and_build_fin_and_quant_ui(user_msg)
 
-    # 动态数值展示
     sell_display = get_price_display(sell_p, buy_p)
     stop_display = get_price_display(stop_p, buy_p)
     buy_display = str(buy_p) if buy_p else "-"
 
-    # 【修改】：增加了 "周期与策略" 的输出
     return (
         fig, 
         f"{s_name} ({stock_code})", 
