@@ -4,13 +4,14 @@ import re
 import concurrent.futures
 import time
 import pandas as pd
+import glob  # <--- 新增导入
 from datetime import datetime, timedelta
 import json_repair
 import baostock as bs
 
 from src.data_crawler import get_stock_data, get_stock_name_bs, get_chart_data, get_ths_fund_flow, get_30m_chart_data, format_large_number
 from src.LLM_chat import get_LLM_message, get_model_config
-from src.utils import fetch_news_safely, parse_llm_json
+from src.utils import fetch_news_safely, parse_llm_json, get_all_output_dates # <--- 新增 get_all_output_dates
 from src.financial_analyzer import process_pipeline
 
 def run_core_analysis(
@@ -21,7 +22,6 @@ def run_core_analysis(
 ):
     """
     统一的核心分析引擎，供 UI (app.py) 和 批处理 (worker.py) 调用。
-    返回: df_chart, stock_name, stock_price, parsed_json, disp_model, user_msg, result_text
     """
     if not committee_model:
         committee_model = flash_model
@@ -130,6 +130,7 @@ def run_core_analysis(
     
     if set_progress: set_progress(f"🧠 步骤 3/5: 正在请求基础模型 ({flash_model}) 进行初筛逻辑推演...")
     
+    # === 阶段 1：初筛过滤器 ===
     if use_pro and dual_filter:
         if float(position) > 0: 
             run_pro = True
@@ -148,9 +149,13 @@ def run_core_analysis(
     else:
         res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=flash_model)
 
+    # === 阶段 2：准备进入高级决议圈的数据 (财报 + 历史记忆) ===
+    history_str = ""
     if run_pro:
-        if set_progress: set_progress("📊 阶段触发: 进入高级决议圈，正在进行深度财报研读...")
+        if set_progress: set_progress("📊 阶段触发: 进入高级决议圈，正在进行深度财报研读与历史记忆检索...")
         print(f"\n🎯 [{stock_code}] {s_name} 进入高级决议圈，触发大模型深度财报研读...")
+        
+        # 2.1 财报检索
         try:
             match = re.search(r"最新财务报告期:\s*([0-9\-]+)", in_str)
             if match:
@@ -163,7 +168,30 @@ def run_core_analysis(
                 print("   ⚠️ 无法在原文中提取到财报日期，跳过财报解析。")
         except Exception as e:
             print(f"   ⚠️ 财报研读模块调用失败，已跳过: {e}")
+            
+        # 2.2 🌟 检索总监近期的历史决策记忆库 🌟
+        all_dates = get_all_output_dates()
+        past_dates = [d for d in all_dates if d < current_date_str]
+        
+        history_texts = []
+        for d in past_dates[:3]:  # 取最近的3次记录
+            out_fs = glob.glob(f"output/{d}/{stock_code}_*_output_*_{d}.txt")
+            if out_fs:
+                try:
+                    with open(out_fs[0], 'r', encoding='utf-8') as f:
+                        h_out = f.read()
+                    h_parsed = parse_llm_json(h_out)
+                    reasoning = h_parsed.get("reasoning") or h_parsed.get("原因")
+                    action = h_parsed.get("action") or h_parsed.get("操作")
+                    if reasoning and reasoning not in ["-", "暂无深度逻辑"]:
+                        history_texts.append(f"▶【日期：{d} | 历史动作：{action}】\n推演逻辑：{reasoning}")
+                except Exception:
+                    pass
+        if history_texts:
+            history_str = "\n\n".join(history_texts)
+            print(f"   💡 成功提取到 {len(history_texts)} 条针对该股的历史决策记忆！")
 
+    # === 阶段 3：高级决议阶段 (MoA vs 单模型) ===
     if run_pro: 
         if use_moa and committee_agents:
             if set_progress: set_progress(f"👥 步骤 4/5: 正在呼叫 {len(committee_agents)} 位投资大师模型并发分析...")
@@ -176,6 +204,7 @@ def run_core_analysis(
                     with open(f"src/agents_text/{agent_name}.txt", "r", encoding="utf-8") as f:
                         agent_persona = f.read()
                     agent_sys_content = f"{agent_persona}\n\n====================\n以下是系统级硬性约束，你必须严格遵守：\n{format_rules}"
+                    # 提示：传递给大师的 user_msg 是纯客观数据，没有历史记忆干扰，保证其视角的独立性
                     return get_LLM_message(system_content=agent_sys_content, user_message=user_msg, model_id=committee_model)
                 except Exception as e:
                     return f"该大师 ({agent_name}) 分析失败：{e}"
@@ -203,7 +232,13 @@ def run_core_analysis(
                 display_name = agent_name.replace("_", " ")
                 judge_msg += f"--- 投资大师：{display_name} 的意见 ---\n{res}\n\n"
                 
-            judge_msg += "作为量化基金的投资总监，你拥有最终拍板权。请严格按照以下【核心裁判原则】进行综合决策：\n1. 事实核查先行（零容忍数据幻觉）：必须先核对大师引用的数据是否与上文提供的【客观标的数据】完全一致。对于任何基于虚构数据得出的结论，必须直接一票否决。\n2. 寻找非共识的正确与流派交叉验证：重点审视大师之间的【分歧点】。例如，当价值派（如巴菲特）与趋势派（如利弗莫尔）在特定点位达成共识时，该决策置信度极高；若出现严重分歧，需判断当前市场环境更适用哪种流派。\n3. 拒绝无效瘫痪（果断决策）：不要因为存在分歧就本能地退缩到‘观望’。在剔除幻觉意见后，评估盈亏比，勇敢给出具体的买入/卖出、观望指令和点位。\n4. 资金面数据的辩证看待：资金流向是重要的辅助验证工具，但【绝非所有策略的硬性前提】。如果是左侧深度价值潜伏，主力资金未明显介入甚至流出是完全正常的；如果是右侧主升浪突破，则需要资金合力。切勿因为缺乏明显的资金净流入，就教条式地否决优秀的左侧或长线基本面机会。\n\n请给出最终决策。你必须在 JSON 的 '原因' 字段中分段输出：\n【事实核查与幻觉剔除】：简述是否有大师引用了错误数据。\n【大师观点交锋】：简述各流派有效观点的交锋与共鸣点。\n【总监拍板逻辑】：详细说明你最终的综合裁决理由。\n注意：你的输出必须是一个单一的、严格符合原定系统提示词规范的 JSON 对象！\n"
+            judge_msg += "作为量化基金的投资总监，你拥有最终拍板权。请严格按照以下【核心裁判原则】进行综合决策：\n1. 事实核查先行（零容忍数据幻觉）：必须先核对大师引用的数据是否与上文提供的【客观标的数据】完全一致。对于任何基于虚构数据得出的结论，必须直接一票否决。\n2. 寻找非共识的正确与流派交叉验证：重点审视大师之间的【分歧点】。例如，当价值派（如巴菲特）与趋势派（如利弗莫尔）在特定点位达成共识时，该决策置信度极高；若出现严重分歧，需判断当前市场环境更适用哪种流派。\n3. 拒绝无效瘫痪（果断决策）：不要因为存在分歧就本能地退缩到‘观望’。在剔除幻觉意见后，评估盈亏比，勇敢给出具体的买入/卖出、观望指令和点位。\n4. 资金面数据的辩证看待：资金流向是重要的辅助验证工具，但【绝非所有策略的硬性前提】。如果是左侧深度价值潜伏，主力资金未明显介入甚至流出是完全正常的；如果是右侧主升浪突破，则需要资金合力。切勿因为缺乏明显的资金净流入，就教条式地否决优秀的左侧或长线基本面机会。\n\n"
+
+            # 🌟 在最后关头注入历史记忆，仅供总监（裁判）参考
+            if history_str:
+                judge_msg += f"=================================\n【总监个人历史记忆库】\n系统调取了你（总监）前几日对该股做出的深度推演，请以此作为连贯性参考：\n{history_str}\n\n（特别注意：请对照最新大师意见与今日最新盘面，审视原逻辑是否被证伪。保持你投资思路的连贯性；但若行情发生根本反转，请果断进行战略纠错！）\n\n"
+
+            judge_msg += "请给出最终决策。你必须在 JSON 的 '原因' 字段中分段输出：\n【事实核查与幻觉剔除】：简述是否有大师引用了错误数据。\n【大师观点交锋】：简述各流派有效观点的交锋与共鸣点。\n【总监拍板逻辑】：结合最新盘面与你的历史记忆，详细说明最终裁决理由。\n注意：你的输出必须是一个单一的、严格符合原定系统提示词规范的 JSON 对象！\n"
 
             if set_progress: set_progress(f"⚖️ 步骤 5/5: 正在呼叫总监模型 ({pro_model}) 进行最终综合裁决...")
             print(f"⏳ 开始呼叫总监模型: {pro_model}...")
@@ -213,8 +248,13 @@ def run_core_analysis(
             model_tag = f"MoA-{len(committee_agents)}大师-{pro_model}"
             
         else:
+            final_user_msg = user_msg
+            # 🌟 如果未开启多大师议事，但在使用单体 Pro 模型，依然注入记忆
+            if history_str:
+                final_user_msg += f"\n\n=================================\n### 【总监个人历史记忆库】\n前几日你对该股的决策与逻辑如下：\n{history_str}\n\n（特别注意：请结合今日最新盘面，评估你的原逻辑是否被证伪，保持投资体系的连贯性，或在变盘时果断纠错。）\n"
+
             if set_progress: set_progress(f"⚖️ 步骤 4/4: 正在呼叫 Pro 模型 ({pro_model}) 进行深度推演...")
-            res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=pro_model)
+            res_text = get_LLM_message(system_content=sys_content, user_message=final_user_msg, model_id=pro_model)
             model_tag = f"D-{flash_model}-{pro_model}" if dual_filter else pro_model
 
     model_configs = get_model_config()
