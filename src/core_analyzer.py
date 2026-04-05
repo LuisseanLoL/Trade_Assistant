@@ -31,28 +31,23 @@ def run_core_analysis(
     beg = (c_date - timedelta(days=720)).strftime("%Y%m%d")
 
     if set_progress: set_progress("🔍 步骤 1/5: 正在连接数据源获取基础行情与量价数据...")
+    # 修改为直接调用：
+    s_name = get_stock_name_bs(stock_code)
+    safe_s_name = re.sub(r'[\\/:*?"<>|]', '', s_name) 
     
-    bs.login()
+    df_chart = get_chart_data(stock_code, beg, end)
+    df_30m = get_30m_chart_data(stock_code, beg, end)
+
     try:
-        s_name = get_stock_name_bs(stock_code)
-        safe_s_name = re.sub(r'[\\/:*?"<>|]', '', s_name) 
-        
-        df_chart = get_chart_data(stock_code, beg, end)
-        df_30m = get_30m_chart_data(stock_code, beg, end)
+        fund_df = get_ths_fund_flow(stock_code, current_date_str)
+        if not fund_df.empty:
+            df_chart = pd.merge(df_chart, fund_df, on='date', how='left')
+    except Exception as e:
+        print(f"合并资金数据到日常图表失败: {e}")
 
-        try:
-            fund_df = get_ths_fund_flow(stock_code, current_date_str)
-            if not fund_df.empty:
-                df_chart = pd.merge(df_chart, fund_df, on='date', how='left')
-        except Exception as e:
-            print(f"合并资金数据到日常图表失败: {e}")
+    s_price = df_chart['close'].iloc[-1] if not df_chart.empty else 0
 
-        s_price = df_chart['close'].iloc[-1] if not df_chart.empty else 0
-
-        in_str = get_stock_data(stock_code=stock_code, beg=beg, end=end, current_date=current_date_str)
-        
-    finally:
-        bs.logout()
+    in_str = get_stock_data(stock_code=stock_code, beg=beg, end=end, current_date=current_date_str)
         
     if set_progress: set_progress("📰 步骤 2/5: 正在全网抓取最新市场新闻与宏观情绪...")
     news_titles = fetch_news_safely(stock_code, safe_s_name, current_date_str)
@@ -220,7 +215,7 @@ def run_core_analysis(
             print(f"⏳ 开始呼叫 {len(committee_agents)} 位投资大师模型并发分析 (底层模型: {committee_model})...")
             committee_start_time = time.time()
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
                 futures = {executor.submit(agent_task, agent_name): agent_name for agent_name in committee_agents}
                 for future in concurrent.futures.as_completed(futures):
                     agent_name = futures[future]

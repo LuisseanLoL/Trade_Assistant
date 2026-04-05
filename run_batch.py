@@ -13,6 +13,7 @@ import os
 import random
 import glob
 import pandas as pd
+import baostock as bs
 import questionary
 from questionary import Choice
 from dotenv import load_dotenv
@@ -290,41 +291,50 @@ def main():
     success_count = 0
     skip_count = 0
 
-    for code in batch:
-        pos_info = portfolio_data.get(code, {'position': 0.0, 'cost': 0.0})
-        current_position = pos_info['position']
-        current_cost = pos_info['cost']
+    print("\n🔌 正在建立 Baostock 全局数据连接...")
+    bs.login()
 
-        print(f">>> 开始处理股票: {code} | 当前持仓: {current_position} 股 | 成本: {current_cost} 元")
-        
-        try:
-            # 直接调用核心分析引擎
-            df_chart, s_name, s_price, parsed, disp_model, user_msg, res_text = run_core_analysis(
-                stock_code=code,
-                position=current_position,
-                cost=current_cost,
-                current_date_str=current_date_str,
-                flash_model=flash_model,
-                use_pro=use_pro,
-                pro_model=pro_model,
-                dual_filter=dual_filter,
-                use_moa=use_moa,
-                committee_agents=committee_agents,
-                committee_model=committee_model,
-                set_progress=print
-            )
+    try:
+        for code in batch:
+            pos_info = portfolio_data.get(code, {'position': 0.0, 'cost': 0.0})
+            current_position = pos_info['position']
+            current_cost = pos_info['cost']
 
-            # 解析结果为空，说明触发了过滤/初筛（没有产生实质性交易价值）
-            if not parsed:
-                print(f"⚠️ 已跳过 {code}（可能由于初筛无交易价值或数据获取失败）。\n")
+            print(f">>> 开始处理股票: {code} | 当前持仓: {current_position} 股 | 成本: {current_cost} 元")
+            
+            try:
+                # 直接调用核心分析引擎
+                df_chart, s_name, s_price, parsed, disp_model, user_msg, res_text = run_core_analysis(
+                    stock_code=code,
+                    position=current_position,
+                    cost=current_cost,
+                    current_date_str=current_date_str,
+                    flash_model=flash_model,
+                    use_pro=use_pro,
+                    pro_model=pro_model,
+                    dual_filter=dual_filter,
+                    use_moa=use_moa,
+                    committee_agents=committee_agents,
+                    committee_model=committee_model,
+                    set_progress=print
+                )
+
+                # 解析结果为空，说明触发了过滤/初筛（没有产生实质性交易价值）
+                if not parsed:
+                    print(f"⚠️ 已跳过 {code}（可能由于初筛无交易价值或数据获取失败）。\n")
+                    skip_count += 1
+                else:
+                    print(f"✅ {code} 处理成功并已落库。\n")
+                    success_count += 1
+
+            except Exception as e:
+                print(f"❌ 处理 {code} 时发生严重异常: {e}\n")
                 skip_count += 1
-            else:
-                print(f"✅ {code} 处理成功并已落库。\n")
-                success_count += 1
 
-        except Exception as e:
-            print(f"❌ 处理 {code} 时发生严重异常: {e}\n")
-            skip_count += 1
+    finally:
+        # 确保无论脚本是正常跑完还是中途报错/被强制中断，都能优雅断开连接
+        bs.logout()
+        print("🔌 全局数据连接已断开。")
 
     print(f"--- 🏁 批量处理完毕！成功: {success_count} 只，跳过/失败: {skip_count} 只 ---")
 

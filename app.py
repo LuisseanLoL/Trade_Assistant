@@ -4,6 +4,7 @@ from dash import dcc, html, Input, Output, State, dash_table, callback_context
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import pandas as pd
+import baostock as bs
 from datetime import datetime, timedelta
 import os
 import glob
@@ -381,20 +382,25 @@ def unified_action_handler(set_progress, n_clicks, active_cell, stock_code, flas
     c_str = c_date.strftime("%Y-%m-%d")
     stock_code = stock_code.strip()
 
-    df_chart, s_name, s_price, parsed, disp_model, user_msg, res_text = run_core_analysis(
-        stock_code=stock_code,
-        position=position,
-        cost=cost,
-        current_date_str=c_str,
-        flash_model=flash_model,
-        use_pro=use_pro,
-        pro_model=pro_model,
-        dual_filter=dual_filter,
-        use_moa=use_moa,
-        committee_agents=committee_agents,
-        committee_model=flash_model,
-        set_progress=set_progress
-    )
+    # 在调用核心引擎前后包裹 login 和 logout
+    bs.login()
+    try:
+        df_chart, s_name, s_price, parsed, disp_model, user_msg, res_text = run_core_analysis(
+            stock_code=stock_code,
+            position=position,
+            cost=cost,
+            current_date_str=c_str,
+            flash_model=flash_model,
+            use_pro=use_pro,
+            pro_model=pro_model,
+            dual_filter=dual_filter,
+            use_moa=use_moa,
+            committee_agents=committee_agents,
+            committee_model=flash_model,
+            set_progress=set_progress
+        )
+    finally:
+        bs.logout()
 
     set_progress("分析完毕！正在渲染数据与交互图表...")
 
