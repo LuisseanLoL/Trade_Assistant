@@ -103,28 +103,41 @@ def download_specific_report_api(stock_code: str, year: str, category: str, down
 
 def slice_financial_report_pdf(pdf_path: str, is_annual: bool) -> str:
     """
-    V3.0 广域提炼+智能降噪切片引擎：
-    扩大提取范围（含财务指标总结、重大事项、股东等），并用强力正则抹除无意义表格数据。
+    V4.0 智能切片引擎：状态机模型 + 动态配额控制 + 密度降噪
+    解决银行股财报过长截断、小盘股提取过多无用信息的问题。
     """
     if not pdf_path or not os.path.exists(pdf_path): return ""
     
-    print(f"   ✂️ 正在通过[广域降噪模式]切片解析 PDF: {os.path.basename(pdf_path)}")
+    print(f"   ✂️ 启动[智能状态机模式]精准提取 PDF: {os.path.basename(pdf_path)}")
     try:
         doc = fitz.open(pdf_path)
-        extracted_text = []
         
-        # 匹配无意义表格残骸：纯数字、纯金额、纯百分比、日期、短横线、空括号
-        table_noise_pattern = re.compile(r'^[\s\d\.\,\%\-\(\)（）/]+$')
+        # --- 1. 核心节区位定义 ---
+        # 我们只在进入这些“黄金章节”时才开启录制
+        target_keywords = ["主要财务数据", "管理层讨论与分析", "重要事项", "股份变动", "股东情况", "利润分配"]
         
-        # 重点关注的章节标题锚点
-        core_keywords = ["主要财务数据", "管理层讨论与分析", "重要事项", "股份变动", "股东情况", "利润分配"]
+        # 遇到这些章节直接闭麦（尤其是冗长的公司治理和最后的财务明细）
+        stop_keywords = ["财务报告", "审计报告", "公司治理", "环境和社会责任", "备查文件目录"]
+        
+        # 按板块分类收集文本，避免某一个板块把 50000 字符额度吃光
+        section_buffers = {
+            "财务数据与管理层讨论": [],
+            "重要事项与股东情况": [],
+            "其他核心信息": []
+        }
+        
+        current_bucket = "其他核心信息"
+        is_recording = False  # 状态机开关
+        found_financial_report = False
+        
+        # 避免把目录(TOC)里的标题误认为正文标题，跳过前 3 页的标题判定
+        skip_toc_pages = 3 
 
-        found_stop_sign = False
-        max_pages = min(120, len(doc)) if is_annual else min(30, len(doc))
+        max_pages = min(250, len(doc)) # 放宽最大页数，靠状态机自己停
 
         for page_num in range(max_pages):
-            if found_stop_sign:
-                break
+            if found_financial_report:
+                break # 彻底结束
 
             blocks = doc[page_num].get_text("blocks")
 
@@ -133,39 +146,101 @@ def slice_financial_report_pdf(pdf_path: str, is_annual: bool) -> str:
 
                 text = block[4].strip()
                 if not text: continue
-
                 text = re.sub(r'\s*\n\s*', '', text)
                 
-                # --- 1. 终点判定 ---
-                if ("第十节" in text and "财务报告" in text) or ("审计报告" in text and page_num > 40):
-                    found_stop_sign = True
-                    extracted_text.append("\n【系统提示：后续为财务明细附注，已终止提取】\n")
-                    break
+                # --- 2. 状态机切换逻辑 (检测短文本标题) ---
+                if len(text) < 35 and page_num > skip_toc_pages:
+                    # 碰到终止章节 -> 关机
+                    if any(k in text for k in stop_keywords) and ("第" in text or "十节" in text or "十一节" in text):
+                        is_recording = False
+                        if "财务报告" in text or "审计报告" in text:
+                            found_financial_report = True
+                            break
+                        continue
 
-                # --- 2. 章节高亮 ---
-                if len(text) < 25 and any(k in text for k in core_keywords):
-                    extracted_text.append(f"\n===== 【{text}】 =====\n")
+                    # 碰到目标章节 -> 开机并分类
+                    for k in target_keywords:
+                        if k in text:
+                            is_recording = True
+                            if k in ["主要财务数据", "管理层讨论与分析"]:
+                                current_bucket = "财务数据与管理层讨论"
+                            elif k in ["重要事项", "股份变动", "股东情况"]:
+                                current_bucket = "重要事项与股东情况"
+                            else:
+                                current_bucket = "其他核心信息"
+                            
+                            section_buffers[current_bucket].append(f"\n\n===== 【{text}】 =====\n")
+                            break
+                            
+                # 如果没在录制状态，直接跳过这段文本
+                if not is_recording:
                     continue
 
-                # --- 3. 暴力降噪 ---
+                # --- 3. 增强型降噪 (对抗银行股的恐怖表格) ---
                 if len(text) < 4: continue 
-                if table_noise_pattern.match(text): continue 
+                
+                # 过滤纯符号/数字行
+                if re.match(r'^[\s\d\.\,\%\-\(\)（）/]+$', text): 
+                    continue 
+                
+                # 【新增】数字密度检测：如果一段话里全是数字和金额，文字极少，大概率是无意义的表格残骸
+                numbers_len = sum(c.isdigit() or c in '.,%' for c in text)
+                if len(text) > 20 and (numbers_len / len(text)) > 0.6:
+                    continue 
 
-                extracted_text.append(text)
+                section_buffers[current_bucket].append(text)
 
         doc.close()
         
-        full_text = "\n".join(extracted_text)
-        full_text = re.sub(r'\n{2,}', '\n', full_text) 
+        # --- 4. 动态配额组装 (Dynamic Budgeting) ---
+        # 强制给不同的板块分配额度，防止某个板块（如银行的管理层讨论）吃干抹净
+        final_text_parts = []
         
-        # 将文本严格控制在 50000 字符内，保障本地显存安全
-        final_text = full_text[:50000]
+        # 分配额度：总长最多控制在 40000 字（留给 Prompt 空间）
+        budgets = {
+            "财务数据与管理层讨论": 20000,
+            "重要事项与股东情况": 15000,
+            "其他核心信息": 5000
+        }
         
-        print(f"   ✅ 切片与降噪完成，高密度文本有效字符数: {len(final_text)}")
+        for bucket, text_list in section_buffers.items():
+            bucket_text = "\n".join(text_list)
+            bucket_text = re.sub(r'\n{2,}', '\n', bucket_text) # 清理多余换行
+            
+            # 如果超额，只截取该板块的前 N 个字
+            if len(bucket_text) > budgets[bucket]:
+                bucket_text = bucket_text[:budgets[bucket]] + f"\n...[系统提示：该章节过长，已被安全截断 (字数上限 {budgets[bucket]})]...\n"
+                
+            final_text_parts.append(bucket_text)
+            
+        final_text = "\n".join(final_text_parts).strip()
+        
+        if not final_text:
+            # 兜底逻辑：如果状态机因为格式奇葩没抓到任何东西，退化为抓取前40页
+            print("   ⚠️ 状态机未匹配到标准章节，触发兜底提取逻辑...")
+            return slice_financial_report_pdf_fallback(pdf_path, is_annual)
+
+        print(f"   ✅ 智能切片完成，有效信息提取: {len(final_text)} 字符 (大盘股/银行股防截断机制已生效)")
         return final_text 
+
     except Exception as e:
         print(f"   ❌ PDF解析失败: {e}")
         return ""
+
+def slice_financial_report_pdf_fallback(pdf_path: str, is_annual: bool) -> str:
+    """极其不规范的财报兜底提取函数（原 V3.0 的浓缩版）"""
+    # 这里的逻辑就是在极端情况下，直接提取前30页文字，防崩溃
+    doc = fitz.open(pdf_path)
+    text_blocks = []
+    max_pages = 40 if is_annual else 20
+    for page_num in range(min(max_pages, len(doc))):
+        for block in doc[page_num].get_text("blocks"):
+            if block[6] == 0:
+                t = block[4].strip()
+                if len(t) > 5 and not re.match(r'^[\s\d\.\,\%\-\(\)（）/]+$', t):
+                    text_blocks.append(t)
+    doc.close()
+    return "\n".join(text_blocks)[:25000]
 
 def generate_report_summary_with_llm(current_text: str, prev_text: str, report_type: str, stock_name: str) -> str:
     """调用大模型进行财报分析并打分"""
@@ -240,21 +315,21 @@ def process_pipeline(stock_code: str, stock_name: str, report_date_raw: str) -> 
         
     prev_year = str(int(year) - 1)
     
+    # 🌟 修改点 1：将上一年度对比目标强制定死为“年报”
+    prev_cat = "年报"
+    
     if mmdd == "1231":
         curr_cat = "年报"
-        prev_cat = "年报"
         is_annual = True
     elif mmdd == "0630":
         curr_cat = "半年报"
-        prev_cat = None
-        is_annual = True
+        # 保留 is_annual = True 是为了让半年报提取更多的页数（半年报通常也很长）
+        is_annual = True 
     elif mmdd == "0331":
         curr_cat = "一季报"
-        prev_cat = None
         is_annual = False
     elif mmdd == "0930":
         curr_cat = "三季报" 
-        prev_cat = None
         is_annual = False
     else:
         return ""
@@ -265,8 +340,10 @@ def process_pipeline(stock_code: str, stock_name: str, report_date_raw: str) -> 
     curr_text = slice_financial_report_pdf(curr_pdf_path, is_annual)
     
     prev_text = ""
+    # 🌟 修改点 2：这里现在一定会触发，去下载并切片上一年度的年报
     if prev_cat:
         prev_pdf_path = download_specific_report_api(stock_code, prev_year, prev_cat, pdf_dir)
+        # 年报切片必须强制传入 is_annual=True，以保证提取足够的页数（120页）
         prev_text = slice_financial_report_pdf(prev_pdf_path, True)
     
     display_title = f"{year}年{curr_cat}" 
