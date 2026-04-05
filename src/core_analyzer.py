@@ -131,9 +131,13 @@ def run_core_analysis(
     if set_progress: set_progress(f"🧠 步骤 3/5: 正在请求基础模型 ({flash_model}) 进行初筛逻辑推演...")
     
     # === 阶段 1：初筛过滤器 ===
+    print(f"⏳ 开始呼叫基础模型 ({flash_model}) 进行初筛逻辑推演...")
+    filter_start_time = time.time()
+    
     if use_pro and dual_filter:
         if float(position) > 0: 
             run_pro = True
+            print("   💡 当前持仓大于0，跳过 API 请求，直接进入高级决议圈...")
         else:
             res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=flash_model)
             try:
@@ -146,8 +150,12 @@ def run_core_analysis(
                 run_pro = True 
     elif use_pro and not dual_filter:
         run_pro = True
+        print("   💡 未开启双筛，跳过 API 请求，直接进入高级决议圈...")
     else:
         res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=flash_model)
+
+    filter_cost_time = time.time() - filter_start_time
+    print(f"✅ 基础模型初筛执行完毕，耗时: {filter_cost_time:.2f} 秒\n")
 
     # === 阶段 2：准备进入高级决议圈的数据 (财报 + 历史记忆) ===
     history_str = ""

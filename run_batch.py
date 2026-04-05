@@ -1,4 +1,14 @@
 # -*- coding: utf-8 -*-
+import logging
+
+# 屏蔽底层 HTTP 库的日志，防止并发时终端被请求信息刷屏
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("requests").setLevel(logging.WARNING)
+logging.getLogger("google").setLevel(logging.WARNING)
+logging.getLogger("google.genai").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
+
 import os
 import random
 import glob
@@ -142,7 +152,7 @@ def main():
     # 变量初始化
     pro_model = flash_model
     committee_model = flash_model 
-    dual_filter = use_pro 
+    dual_filter = False # 默认先设为 False
     use_moa = False
     committee_agents = []
 
@@ -154,6 +164,9 @@ def main():
         if use_moa is None: return
 
         if use_moa:
+            # === MoA 模式：互斥关闭双筛 ===
+            dual_filter = False 
+            
             agent_choices = get_agent_options()
             if not agent_choices:
                 print("⚠️ 未在 agents_text/ 目录下检测到大师人设文件，已自动退化为单模型复盘模式。")
@@ -184,6 +197,7 @@ def main():
                 ).ask()
                 if pro_model is None: return
         
+        # 注意这里是单独的 if，如果上面 MoA 失败退化，或者用户选了 No，都会进入这里
         if not use_moa:
             pro_model = questionary.select(
                 "请选择【单发：终审高级模型】(如 DeepSeek 或 Gemini-Pro)：",
@@ -191,6 +205,13 @@ def main():
                 pointer="👉"
             ).ask()
             if pro_model is None: return
+            
+            # === 单模型模式：允许用户选择是否双筛（对齐 app.py） ===
+            dual_filter = questionary.confirm(
+                "【步骤 3.2】是否启用【双重筛选过滤】？\n(在初筛模型后，要求其明确给出交易方向才触发终审)", 
+                default=True
+            ).ask()
+            if dual_filter is None: return
 
     print("\n" + "="*50 + "\n")
 
@@ -289,7 +310,8 @@ def main():
                 dual_filter=dual_filter,
                 use_moa=use_moa,
                 committee_agents=committee_agents,
-                committee_model=committee_model
+                committee_model=committee_model,
+                set_progress=print
             )
 
             # 解析结果为空，说明触发了过滤/初筛（没有产生实质性交易价值）
