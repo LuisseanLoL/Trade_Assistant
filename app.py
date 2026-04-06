@@ -44,7 +44,7 @@ from src.core_analyzer import run_core_analysis
 BG_COLOR = "#f5f6fa"
 CARD_STYLE = {"backgroundColor": "#ffffff", "border": "none", "borderRadius": "6px", "boxShadow": "0 1px 6px rgba(0, 0, 0, 0.04)", "marginBottom": "10px"}
 SIDEBAR_STYLE = {"backgroundColor": "#ffffff", "height": "100vh", "padding": "15px", "borderRight": "1px solid #ebedf2", "position": "fixed", "width": "280px", "top": 0, "left": 0, "zIndex": 1000}
-CONTENT_STYLE = {"marginLeft": "280px", "padding": "15px", "backgroundColor": BG_COLOR, "minHeight": "100vh"}
+CONTENT_STYLE = {"marginLeft": "280px", "padding": "15px", "backgroundColor": BG_COLOR, "minHeight": "100vh", "position": "relative"}
 
 # ================= 动态选项池定义 =================
 MODEL_CONFIGS = get_model_config()
@@ -136,12 +136,17 @@ def create_stat_card(title, value_id, color, value_size="1.0rem"):
     ], style={"backgroundColor": "#ffffff", "borderRadius": "6px", "boxShadow": "0 1px 4px rgba(0, 0, 0, 0.03)", "padding": "8px", "height": "100%", "minWidth": "90px"}), className="col px-1")
 
 content = html.Div([
-    # ================== 运行状态提示区 ==================
-    html.Div([
-        dbc.Progress(id="running-progress", value=100, striped=True, animated=True, style={"height": "4px", "display": "none"}, className="mb-1"),
-        html.Div(id="progress-msg", style={"display": "none", "fontSize": "0.85rem", "color": "#4c6ef5", "fontWeight": "bold", "marginBottom": "10px", "textAlign": "center"})
-    ]),
+    # ================== 运行状态全屏半透明覆盖层 ==================
+    html.Div(
+        id="loading-overlay",
+        style={"display": "none"},
+        children=[
+            dbc.Spinner(color="primary", spinner_style={"width": "3.5rem", "height": "3.5rem", "marginBottom": "20px"}),
+            html.Div(id="progress-msg", style={"fontSize": "1.1rem", "color": "#4c6ef5", "fontWeight": "bold", "textAlign": "center", "letterSpacing": "0.5px"})
+        ]
+    ),
 
+    # ================== 主体业务内容 ==================
     html.Div([
         html.Div([
             html.Div([
@@ -317,8 +322,17 @@ def update_table(active_tab): return load_daily_table_by_date(active_tab) if act
     running=[
         (Output("btn-analyze", "disabled"), True, False), 
         (Output("btn-analyze", "children"), html.Span([html.I(className="fa-solid fa-spinner fa-spin me-2"), "推演中..."]), "开始分析"), 
-        (Output("running-progress", "style"), {"height": "4px", "display": "block"}, {"height": "4px", "display": "none"}),
-        (Output("progress-msg", "style"), {"display": "block", "fontSize": "0.85rem", "color": "#4c6ef5", "fontWeight": "bold", "marginBottom": "10px", "textAlign": "center"}, {"display": "none"}),
+        # ======= 在运行状态中动态控制蒙层样式 =======
+        (Output("loading-overlay", "style"), 
+         {
+             "display": "flex", "position": "fixed", "top": 0, "left": "280px", 
+             "width": "calc(100% - 280px)", "height": "100vh", 
+             "backgroundColor": "rgba(255, 255, 255, 0.85)", "backdropFilter": "blur(4px)",
+             "zIndex": 9999, "flexDirection": "column", 
+             "justifyContent": "center", "alignItems": "center"
+         }, 
+         {"display": "none"}
+        ),
     ],
     progress=[Output("progress-msg", "children")], 
     progress_default="准备启动分析引擎..."
