@@ -172,27 +172,35 @@ def run_core_analysis(
         except Exception as e:
             print(f"   ⚠️ 财报研读模块调用失败，已跳过: {e}")
             
-        # 2.2 🌟 检索总监近期的历史决策记忆库 🌟
+        # === 阶段 2.2：🌟 检索历史决策记忆库 (增强版) 🌟 ===
         all_dates = get_all_output_dates()
+        # 过滤出早于当前日期的所有记录
         past_dates = [d for d in all_dates if d < current_date_str]
         
         history_texts = []
-        for d in past_dates[:3]:  # 取最近的3次记录
+        # 优化点：从取最近3条 ([:3]) 修改为取最近 10 条，以获得更连贯的策略视野
+        # 如果你想找“更早期”的，可以调整这里的逻辑，比如取 [5:15] 查看更早之前的
+        for d in past_dates[:10]: 
             out_fs = glob.glob(f"output/{d}/{stock_code}_*_output_*_{d}.txt")
             if out_fs:
                 try:
-                    with open(out_fs[0], 'r', encoding='utf-8') as f:
+                    # 优先按文件修改时间排序以确保读取的是该日最终决策
+                    latest_file = max(out_fs, key=os.path.getmtime)
+                    with open(latest_file, 'r', encoding='utf-8') as f:
                         h_out = f.read()
                     h_parsed = parse_llm_json(h_out)
                     reasoning = h_parsed.get("reasoning") or h_parsed.get("原因")
                     action = h_parsed.get("action") or h_parsed.get("操作")
                     if reasoning and reasoning not in ["-", "暂无深度逻辑"]:
-                        history_texts.append(f"▶【日期：{d} | 历史动作：{action}】\n推演逻辑：{reasoning}")
+                        # 截取推演逻辑的前 200 字防止上下文过载
+                        short_reasoning = (reasoning[:200] + '..') if len(reasoning) > 200 else reasoning
+                        history_texts.append(f"▶【日期：{d} | 历史动作：{action}】\n推演逻辑：{short_reasoning}")
                 except Exception:
                     pass
+
         if history_texts:
             history_str = "\n\n".join(history_texts)
-            print(f"   💡 成功提取到 {len(history_texts)} 条针对该股的历史决策记忆！")
+            print(f"   💡 成功提取到 {len(history_texts)} 条历史决策记忆，已注入 AI 裁判上下文。")
 
     # === 阶段 3：高级决议阶段 (MoA vs 单模型) ===
     if run_pro: 

@@ -238,7 +238,7 @@ def parse_and_build_fin_and_quant_ui(input_text):
                 news_text = news_part.split("当前该股持仓：")[0].strip()
         except: pass
 
-    # --- 以下构建 UI 逻辑保持不变 ---
+    # --- 以下构建 UI 逻辑 ---
     def format_market_cap(val_str):
         try: return f"{float(val_str) / 100000000:.2f}亿"
         except: return val_str
@@ -259,42 +259,60 @@ def parse_and_build_fin_and_quant_ui(input_text):
         c = get_color(val, color_type) if color_type != 'neutral' else "#2d3748"
         return html.Div([
             html.Div(label, style={"color": "#868e96", "fontSize": "0.65rem", "whiteSpace": "nowrap"}),
-            html.Div(val, style={"color": c, "fontWeight": "bold", "fontSize": "0.85rem", "whiteSpace": "nowrap"})
+            html.Div(val, style={"color": c, "fontWeight": "bold", "fontSize": "0.8rem", "whiteSpace": "nowrap", "overflow": "hidden", "textOverflow": "ellipsis"})
         ], className="col-4 mb-1", style={"textAlign": "center"})
+
+    # 1. 核心财务指标面板 (扩容优化)
+    report_date = fin_dict.get("最新财务报告期", "-")
+    if len(report_date) == 8:
+        report_date = f"{report_date[:4]}-{report_date[4:6]}-{report_date[6:]}"
 
     fin_ui = html.Div([
         html.Div([
+            html.Div(f"财报期: {report_date}", style={"fontSize": "0.65rem", "float": "right", "color": "#4c6ef5", "fontWeight": "bold", "backgroundColor": "#edf2ff", "padding": "2px 6px", "borderRadius": "4px", "marginTop": "-2px"}),
             html.H6("估值与规模", style={"fontSize": "0.75rem", "fontWeight": "bold", "color": "#495057", "marginBottom": "4px", "paddingBottom": "2px", "borderBottom": "1px solid #e9ecef"}),
             dbc.Row([f_item("总市值", "总市值"), f_item("PE(TTM)", "滚动市盈率 P/E(TTM)"), f_item("PE分位", "市盈率(PE)历史分位", 'percentile')], className="gx-1 mb-0"),
             dbc.Row([f_item("PB", "市净率 P/B"), f_item("PB分位", "市净率(PB)历史分位", 'percentile'), f_item("PS", "市销率 P/S")], className="gx-1 mb-0"),
+            dbc.Row([f_item("股息率", "股息率(TTM)"), f_item("营收", "营业总收入"), f_item("净利润", "净利润")], className="gx-1 mb-0")
         ], style={"backgroundColor": "#f8f9fa", "padding": "6px", "borderRadius": "6px", "marginBottom": "6px"}),
         
         html.Div([
-            html.H6("盈利与成长", style={"fontSize": "0.75rem", "fontWeight": "bold", "color": "#495057", "marginBottom": "4px", "paddingBottom": "2px", "borderBottom": "1px solid #e9ecef"}),
+            html.H6("盈利与营运", style={"fontSize": "0.75rem", "fontWeight": "bold", "color": "#495057", "marginBottom": "4px", "paddingBottom": "2px", "borderBottom": "1px solid #e9ecef"}),
             dbc.Row([f_item("ROE", "净资产收益率(ROE)", 'growth'), f_item("毛利率", "毛利率", 'growth'), f_item("净利率", "销售净利率", 'growth')], className="gx-1 mb-0"),
-            dbc.Row([f_item("营收同比", "营业总收入增长率", 'growth'), f_item("净利同比", "净利润增长率", 'growth'), f_item("负债率", "资产负债率")], className="gx-1 mb-0")
+            dbc.Row([f_item("营收同比", "营业总收入增长率", 'growth'), f_item("净利同比", "净利润增长率", 'growth'), f_item("负债率", "资产负债率")], className="gx-1 mb-0"),
+            dbc.Row([f_item("存货周转", "存货周转天数"), f_item("应收周转", "应收账款周转天数"), f_item("流动比率", "流动比率")], className="gx-1 mb-0")
         ], style={"backgroundColor": "#f8f9fa", "padding": "6px", "borderRadius": "6px"})
     ])
     
+    # 2. 量化信号矩阵 (折叠面板优化)
     if not quant_dict:
         quant_ui = html.Div("暂无量化信号数据", style={"color": "#adb5bd", "fontSize": "0.8rem", "textAlign": "center", "marginTop": "20px"})
     else:
         quant_items = list(quant_dict.items()) # type: ignore
         quant_ui = html.Div([
-            html.Div([
-                html.Div(k, style={"color": "#495057", "fontSize": "0.75rem", "fontWeight": "bold"}),
+            html.Details([
+                html.Summary([
+                    html.Span(k, style={"color": "#495057", "fontSize": "0.75rem", "fontWeight": "bold"}),
+                    html.Div([
+                        html.Span(f"{v.get('信号', '-')} ", style={"color": "#37b24d" if v.get('信号')=='看空' else "#f03e3e" if v.get('信号') in ['看多','买入'] else "#868e96", "fontWeight": "bold", "fontSize": "0.75rem"}),
+                        html.Span(f"({v.get('置信度', '-')})", style={"color": "#adb5bd", "fontSize": "0.7rem"})
+                    ], style={"display": "inline-block", "float": "right"})
+                ], style={
+                    "borderBottom": "1px dashed #dee2e6" if i < len(quant_items) - 1 else "none", 
+                    "padding": "6px 4px", "cursor": "pointer", "outline": "none"
+                }),
                 html.Div([
-                    html.Span(f"{v.get('信号', '-')} ", style={"color": "#37b24d" if v.get('信号')=='看空' else "#f03e3e" if v.get('信号') in ['看多','买入'] else "#868e96", "fontWeight": "bold", "fontSize": "0.75rem"}),
-                    html.Span(f"({v.get('置信度', '-')})", style={"color": "#adb5bd", "fontSize": "0.7rem"})
-                ])
-            ], style={
-                "display": "flex", "justifyContent": "space-between", 
-                "borderBottom": "none" if i == len(quant_items) - 1 else "1px dashed #dee2e6", 
-                "padding": "6px 4px"
-            })
+                    html.Div([
+                        html.Span(dk, style={"color": "#868e96", "fontSize": "0.7rem"}),
+                        html.Span(str(dv), style={"color": "#343a40", "fontSize": "0.7rem", "fontWeight": "bold", "float": "right"})
+                    ], style={"padding": "3px 0", "borderBottom": "1px solid #f1f3f5" if j < len(v.get('具体指标', {})) - 1 else "none"})
+                    for j, (dk, dv) in enumerate(v.get('具体指标', {}).items())
+                ], style={"backgroundColor": "#ffffff", "padding": "6px 8px", "margin": "4px 0", "borderRadius": "4px", "boxShadow": "inset 0 0 4px rgba(0,0,0,0.02)"})
+            ], style={"marginBottom": "2px"})
             for i, (k, v) in enumerate(quant_items)
-        ], style={"backgroundColor": "#f8f9fa", "padding": "8px 10px", "borderRadius": "6px", "marginTop": "2px"})
+        ], style={"backgroundColor": "#f8f9fa", "padding": "4px 8px", "borderRadius": "6px", "marginTop": "2px"})
     
+    # 3. 消息面动态
     formatted_news = []
     if news_text and news_text != "暂无新闻数据":
         for line in news_text.split('\n'):

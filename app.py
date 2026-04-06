@@ -123,19 +123,24 @@ sidebar = html.Div([
     ], style={"height": "calc(100vh - 80px)", "overflowY": "auto", "overflowX": "hidden"})
 ], style=SIDEBAR_STYLE)
 
-def create_stat_card(title, value_id, color):
+def create_stat_card(title, value_id, color, value_size="1.0rem"):
     return dbc.Col(html.Div([
         html.Div(title, className="text-muted small fw-bold mb-0", style={"fontSize": "0.7rem", "whiteSpace": "nowrap"}), 
-        html.Div("-", id=value_id, className="fw-bold", style={"fontSize": "1.0rem", "color": color})
+        html.Div("-", id=value_id, className="fw-bold", style={
+            "fontSize": value_size, 
+            "color": color, 
+            "whiteSpace": "nowrap",       # 强制不换行
+            "overflow": "hidden",         # 超出部分隐藏
+            "textOverflow": "ellipsis"    # 超出部分显示省略号
+        })
     ], style={"backgroundColor": "#ffffff", "borderRadius": "6px", "boxShadow": "0 1px 4px rgba(0, 0, 0, 0.03)", "padding": "8px", "height": "100%", "minWidth": "90px"}), className="col px-1")
 
 content = html.Div([
-    # ================== 【新增】运行状态提示区 ==================
+    # ================== 运行状态提示区 ==================
     html.Div([
         dbc.Progress(id="running-progress", value=100, striped=True, animated=True, style={"height": "4px", "display": "none"}, className="mb-1"),
         html.Div(id="progress-msg", style={"display": "none", "fontSize": "0.85rem", "color": "#4c6ef5", "fontWeight": "bold", "marginBottom": "10px", "textAlign": "center"})
     ]),
-    # ============================================================
 
     html.Div([
         html.Div([
@@ -145,7 +150,7 @@ content = html.Div([
             ], style={"marginRight": "15px", "display": "flex", "flexDirection": "column", "justifyContent": "center"}),
             html.Div([
                 dbc.Row([
-                    create_stat_card("分析标的", "out-stock-name", "#2d3748"),
+                    create_stat_card("分析标的", "out-stock-name", "#2d3748", value_size="0.85rem"), # 调小标的字体
                     create_stat_card("策略动作", "out-action", "#4c6ef5"), 
                     create_stat_card("方向预期", "out-expectation", "#845ef7"), 
                     create_stat_card("建议仓位", "out-position", "#f59f00"), 
@@ -153,7 +158,13 @@ content = html.Div([
                     create_stat_card("建议买点", "out-buy-price", "#be4bdb"), 
                     create_stat_card("目标卖点", "out-sell-price", "#f03e3e"), 
                     create_stat_card("建议止损", "out-stop-price", "#37b24d"),
-                    create_stat_card("决策模型", "out-model-name", "#20c997")
+                    create_stat_card("决策模型", "out-model-name", "#20c997", value_size="0.8rem"), # 调小模型字体
+                    # 呼出抽屉的按钮保持不变
+                    dbc.Col(
+                        dbc.Button([html.I(className="fa-solid fa-clock-rotate-left me-2"), "历史档案"], 
+                                   id="btn-open-history", color="outline-primary", size="sm", className="fw-bold mt-1"),
+                        width="auto", className="px-2 d-flex align-items-center"
+                    )
                 ], className="flex-nowrap", style={"overflowX": "auto", "margin": 0})
             ], style={"flexGrow": 1, "overflow": "hidden"})
         ], className="d-flex align-items-center mb-2", style={"width": "100%"}),
@@ -169,69 +180,97 @@ content = html.Div([
         ], style=CARD_STYLE, className="mb-2"),
 
         dbc.Row([
-            dbc.Col(dbc.Card([dbc.CardBody([html.H6("实时走势与决策标线", className="fw-bold mb-1", style={"color": "#495057", "fontSize": "0.85rem"}), dcc.Graph(id="main-chart", style={"height": "460px"})], style={"padding": "10px"})], style=CARD_STYLE), width=9),
-            dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-globe-asia me-2"), "宏观大盘环境"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-macro", style={"height": "460px"})], style={"padding": "10px"})], style=CARD_STYLE), width=3),
+            dbc.Col(dbc.Card([dbc.CardBody([html.H6("实时走势与决策标线", className="fw-bold mb-1", style={"color": "#495057", "fontSize": "0.85rem"}), dcc.Graph(id="main-chart", style={"height": "360px"})], style={"padding": "10px"})], style=CARD_STYLE), width=9),
+            dbc.Col(dbc.Card([dbc.CardBody([html.H6([html.I(className="fa-solid fa-globe-asia me-2"), "宏观大盘环境"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), html.Div(id="out-macro", style={"height": "360px"})], style={"padding": "10px"})], style=CARD_STYLE), width=3),
         ], className="gx-2"),
 
+        # 核心改动：移除了底部的日志面板，此处卡片高度升至 360px
         dbc.Row([
             dbc.Col(dbc.Card([dbc.CardBody([
                 html.H6([html.I(className="fa-solid fa-file-invoice-dollar me-2"), "核心财务指标"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), 
-                html.Div(id="out-financial", style={"height": "240px", "overflowY": "auto", "overflowX": "hidden"})
-            ], style={"padding": "10px", "height": "280px"})], style=CARD_STYLE), width=3),
+                html.Div(id="out-financial", style={"height": "320px", "overflowY": "auto", "overflowX": "hidden"})
+            ], style={"padding": "10px", "height": "360px"})], style=CARD_STYLE), width=3),
             
             dbc.Col(dbc.Card([dbc.CardBody([
                 html.H6([html.I(className="fa-solid fa-robot me-2"), "量化信号矩阵"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem"}), 
-                html.Div(id="out-quant", style={"height": "240px", "overflowY": "auto", "overflowX": "hidden"})
-            ], style={"padding": "10px", "height": "280px"})], style=CARD_STYLE), width=2),
+                html.Div(id="out-quant", style={"height": "320px", "overflowY": "auto", "overflowX": "hidden"})
+            ], style={"padding": "10px", "height": "360px"})], style=CARD_STYLE), width=2),
             
             dbc.Col(dbc.Card([dbc.CardBody([
                 html.H6([html.I(className="fa-solid fa-brain me-2"), "AI 深度逻辑推演"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem", "paddingBottom": "4px"}), 
                 dcc.Markdown(id="out-reasoning", style={
-                    "height": "200px", "overflowY": "auto", 
-                    "fontSize": "0.8rem", "color": "#343a40", "whiteSpace": "pre-wrap", 
+                    "height": "320px", "overflowY": "auto", 
+                    "fontSize": "0.85rem", "color": "#343a40", "whiteSpace": "pre-wrap", 
                     "lineHeight": "1.65", "textAlign": "justify", 
-                    "backgroundColor": "#f8f9fa", "padding": "10px", "borderRadius": "6px"
+                    "backgroundColor": "#f8f9fa", "padding": "12px", "borderRadius": "6px"
                 })
-            ], style={"padding": "10px", "height": "280px"})], style=CARD_STYLE), width=4),
+            ], style={"padding": "10px", "height": "360px"})], style=CARD_STYLE), width=4),
             
             dbc.Col(dbc.Card([dbc.CardBody([
                 html.H6([html.I(className="fa-solid fa-newspaper me-2"), "消息面动态"], className="fw-bold mb-1 text-secondary", style={"fontSize": "0.85rem", "paddingBottom": "4px"}), 
                 html.Div(id="out-news", style={
-                    "height": "200px", "overflowY": "auto", "overflowX": "hidden", 
-                    "fontSize": "0.75rem", "color": "#495057", "whiteSpace": "pre-wrap",
-                    "backgroundColor": "#f8f9fa", "padding": "10px", "borderRadius": "6px"
+                    "height": "320px", "overflowY": "auto", "overflowX": "hidden", 
+                    "fontSize": "0.8rem", "color": "#495057", "whiteSpace": "pre-wrap",
+                    "backgroundColor": "#f8f9fa", "padding": "12px", "borderRadius": "6px"
                 })
-            ], style={"padding": "10px", "height": "280px"})], style=CARD_STYLE), width=3),
+            ], style={"padding": "10px", "height": "360px"})], style=CARD_STYLE), width=3),
         ], className="gx-2")
     ]),
-
-    html.H6("历史决策日志", className="fw-bold mt-2 mb-2", style={"color": "#2d3748", "fontSize": "0.95rem"}),
-    dbc.Card([
-        dbc.CardBody([
-            dbc.Tabs(id="date-tabs", active_tab=get_all_output_dates()[0] if get_all_output_dates() else "", children=[dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()[:5]], className="mb-2"), 
-            dash_table.DataTable(
-                id='daily-table',
-                columns=[{"name": i, "id": i} for i in ["股票代码", "股票名称", "决策模型", "当前价格", "预期", "操作", "建议仓位", "置信度", "建议买入价", "目标卖出价", "建议止损价", "回报风险比", "详情"]],
-                style_table={'overflowX': 'auto', 'minWidth': '100%'}, 
-                style_cell={'backgroundColor': '#ffffff', 'color': '#495057', 'textAlign': 'center', 'border': 'none', 'borderBottom': '1px solid #f1f3f5', 'padding': '8px', 'fontSize': '0.8rem'},
-                style_header={'backgroundColor': '#f8f9fa', 'fontWeight': 'bold', 'color': '#868e96', 'borderBottom': '2px solid #e9ecef', 'padding': '8px'},
-                style_data_conditional=[
-                    {'if': {'filter_query': '{操作} = "买入"'}, 'color': '#f03e3e', 'fontWeight': 'bold'},
-                    {'if': {'filter_query': '{操作} = "卖出"'}, 'color': '#2f9e44', 'fontWeight': 'bold'},
-                    {'if': {'column_id': '详情'}, 'cursor': 'pointer', 'color': '#4c6ef5', 'fontWeight': 'bold', 'backgroundColor': '#f0f4ff'},
-                    {'if': {'column_id': '详情', 'state': 'active'}, 'backgroundColor': '#dce4ff', 'border': '1px solid #4c6ef5'}
-                ], # type: ignore
-                page_size=5
-            )
-        ], style={"padding": "10px"})
-    ], style=CARD_STYLE)
 ], style=CONTENT_STYLE)
 
-app.layout = html.Div([sidebar, content])
+# ================== 底部抽屉：历史决策日志 ==================
+history_drawer = dbc.Offcanvas(
+    [
+        html.P("选择历史交易日查看当天的详细分析记录 (点击表格 '详情' 自动载入面板)：", className="text-muted small mb-2"),
+        dbc.Tabs(id="date-tabs", active_tab=get_all_output_dates()[0] if get_all_output_dates() else "", 
+                 children=[dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()[:20]], className="mb-2"), 
+        dash_table.DataTable(
+            id='daily-table',
+            columns=[{"name": i, "id": i} for i in ["股票代码", "股票名称", "决策模型", "当前价格", "预期", "操作", "建议仓位", "置信度", "建议买入价", "目标卖出价", "建议止损价", "回报风险比", "详情"]],
+            style_table={'overflowX': 'auto', 'minWidth': '100%'}, 
+            style_cell={'backgroundColor': '#ffffff', 'color': '#495057', 'textAlign': 'center', 'border': 'none', 'borderBottom': '1px solid #f1f3f5', 'padding': '10px', 'fontSize': '0.85rem'},
+            style_header={'backgroundColor': '#f8f9fa', 'fontWeight': 'bold', 'color': '#868e96', 'borderBottom': '2px solid #e9ecef', 'padding': '10px'},
+            style_data_conditional=[
+                {'if': {'filter_query': '{操作} = "买入"'}, 'color': '#f03e3e', 'fontWeight': 'bold'},
+                {'if': {'filter_query': '{操作} = "卖出"'}, 'color': '#2f9e44', 'fontWeight': 'bold'},
+                {'if': {'column_id': '详情'}, 'cursor': 'pointer', 'color': '#4c6ef5', 'fontWeight': 'bold', 'backgroundColor': '#f0f4ff'},
+                {'if': {'column_id': '详情', 'state': 'active'}, 'backgroundColor': '#dce4ff', 'border': '1px solid #4c6ef5'}
+            ], # type: ignore
+            page_size=10
+        )
+    ],
+    id="offcanvas-history",
+    title="📜 全局历史决策档案库",
+    is_open=False,
+    placement="bottom", 
+    style={"height": "65vh", "boxShadow": "0 -5px 25px rgba(0,0,0,0.15)"}
+)
+
+app.layout = html.Div([sidebar, content, history_drawer])
 
 # ==========================================
 # 核心回调逻辑 
 # ==========================================
+
+# 新增：控制历史档案抽屉开关
+@app.callback(
+    Output("offcanvas-history", "is_open"),
+    [Input("btn-open-history", "n_clicks"), Input("daily-table", "active_cell")],
+    [State("offcanvas-history", "is_open")],
+    prevent_initial_call=True
+)
+def toggle_history(n_clicks, active_cell, is_open):
+    ctx = dash.callback_context
+    if not ctx.triggered: return is_open
+    trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    
+    if trigger_id == "daily-table":
+        # 如果点击了表格详情，自动关闭抽屉
+        if active_cell and active_cell['column_id'] == '详情':
+            return False
+        return is_open
+    return not is_open
+
 @app.callback([Output("input-stock-code", "value", allow_duplicate=True), Output("random-msg", "children")], [Input("btn-random", "n_clicks")], prevent_initial_call=True)
 def handle_random_pick(n_clicks):
     if not n_clicks: return dash.no_update, ""
@@ -419,6 +458,7 @@ def unified_action_handler(set_progress, n_clicks, active_cell, stock_code, flas
     stop_display = get_price_display(stop_p, buy_p)
     buy_display = str(buy_p) if buy_p else "-"
 
+    # 返回参数中修改历史档案深度的查询至 20
     return (
         fig, 
         f"{s_name} ({stock_code})", 
@@ -436,7 +476,7 @@ def unified_action_handler(set_progress, n_clicks, active_cell, stock_code, flas
         macro_ui, 
         fin_ui, 
         quant_ui, 
-        [dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()[:5]], 
+        [dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()[:20]], 
         c_str, 
         load_daily_table_by_date(c_str)
     )
