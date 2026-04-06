@@ -637,10 +637,6 @@ def get_macro_market_context(current_date: str) -> str:
             else:
                 if_pre_close = float(df_if_hist.iloc[-1]['收盘价'])
                 
-            # ⚠️ 注意：为了极致速度，这里省略了拉取 IM0 历史的步骤。
-            # 直接用当前基差与昨日价差做近似评估，或者你可以像 IF 一样加一段拉取 IM0 的代码。
-            # 为了简便，我们重点输出基差的绝对值，并让后台算出一个基差Delta。
-            
             if hs300_spot > 0:
                 # 今天基差
                 if_basis_today = if_current_price - hs300_spot
@@ -658,7 +654,6 @@ def get_macro_market_context(current_date: str) -> str:
             if zz1000_spot > 0:
                 im_basis_today = im_current_price - zz1000_spot
                 im_basis_str = f"升水 {im_basis_today:.1f}点" if im_basis_today > 0 else f"贴水 {abs(im_basis_today):.1f}点"
-                # 由于没拉取IM昨收，这里只输出绝对值。若需要可照猫画虎拉取 IM0 历史
                 im_final_str = f"{im_basis_str}"
             else:
                 im_final_str = "基差未知"
@@ -679,7 +674,6 @@ def get_macro_market_context(current_date: str) -> str:
     except Exception as e:
         print(f"⚠️ 期指模块处理异常，已跳过: {e}")
 
-
     macro_context = (
         f"1. 基础行情: 上证指数 {close_val:.2f} (数据日期: {actual_latest_date}, 日涨跌幅: {pct_chg:.2f}%)\n"
         f"2. 趋势与量能: 短期{trend}；大盘量能呈现{vol_status}。\n"
@@ -699,6 +693,48 @@ def get_macro_market_context(current_date: str) -> str:
             print(f"⚠️ 宏观文本缓存写入失败: {e}")
 
     return macro_context
+
+def analyze_bb_status(df, period_name="日线"):
+    """辅助函数：分析指定周期数据框中的布林带状态"""
+    if df.empty or len(df) < 21:
+        return f"{period_name}: 数据不足"
+    
+    latest = df.iloc[-1]
+    prev = df.iloc[-2]
+    
+    close = safe_float(latest['收盘'])
+    upper = safe_float(latest.get('upper_bb', 0))
+    lower = safe_float(latest.get('lower_bb', 0))
+    mid = safe_float(latest.get('MA20', 0))
+    width = safe_float(latest.get('bb_width', 0))
+    prev_width = safe_float(prev.get('bb_width', 0))
+    prev_mid = safe_float(prev.get('MA20', 0))
+    
+    if mid == 0: return f"{period_name}: 数据异常"
+
+    # 1. 价格位置
+    if close > upper: pos = "突破上轨"
+    elif close < lower: pos = "跌破下轨"
+    elif close >= mid: 
+        if upper - close < close - mid: pos = "逼近上轨"
+        else: pos = "中轨之上"
+    else:
+        if close - lower < mid - close: pos = "逼近下轨"
+        else: pos = "中轨之下"
+
+    # 2. 开口状态 (比较当前带宽与前一日/前一周期带宽)
+    if width > prev_width * 1.05: state = "开口显著放大"
+    elif width > prev_width * 1.01: state = "开口缓慢放大"
+    elif width < prev_width * 0.95: state = "开口显著收缩"
+    elif width < prev_width * 0.99: state = "开口缓慢收缩"
+    else: state = "带宽平稳"
+
+    # 3. 开口方向 (比较中轨 MA20 斜率)
+    if mid > prev_mid * 1.002: direction = "通道向上"
+    elif mid < prev_mid * 0.998: direction = "通道向下"
+    else: direction = "横向震荡"
+
+    return f"{period_name}: {pos} | {state} | {direction}"
 
 def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     now = datetime.now()
@@ -793,6 +829,36 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
         k_df_calc[col] = pd.to_numeric(k_df_calc[col], errors='coerce')
 
     processed_data = calculate_advanced_indicators(k_df_calc)
+
+    # ================== 多周期布林带测算 ==================
+    df_resample = k_df_calc.copy()
+    df_resample['日期'] = pd.to_datetime(df_resample['日期'])
+    df_resample.set_index('日期', inplace=True)
+    
+    # 算周线 (以每周五为基准)
+    df_weekly = df_resample.resample('W-FRI').agg({
+        '开盘': 'first', '最高': 'max', '最低': 'min', '收盘': 'last', '成交量': 'sum'
+    }).dropna().reset_index()
+    df_weekly['MA20'] = df_weekly['收盘'].rolling(20).mean()
+    df_weekly['std20'] = df_weekly['收盘'].rolling(20).std()
+    df_weekly['upper_bb'] = df_weekly['MA20'] + 2 * df_weekly['std20']
+    df_weekly['lower_bb'] = df_weekly['MA20'] - 2 * df_weekly['std20']
+    df_weekly['bb_width'] = (df_weekly['upper_bb'] - df_weekly['lower_bb']) / df_weekly['MA20'].replace(0, np.nan)
+    
+    # 算月线 (以每月月末为基准)
+    df_monthly = df_resample.resample('ME').agg({ # 使用 'ME' 兼容最新版 pandas 月底重采样
+        '开盘': 'first', '最高': 'max', '最低': 'min', '收盘': 'last', '成交量': 'sum'
+    }).dropna().reset_index()
+    df_monthly['MA20'] = df_monthly['收盘'].rolling(20).mean()
+    df_monthly['std20'] = df_monthly['收盘'].rolling(20).std()
+    df_monthly['upper_bb'] = df_monthly['MA20'] + 2 * df_monthly['std20']
+    df_monthly['lower_bb'] = df_monthly['MA20'] - 2 * df_monthly['std20']
+    df_monthly['bb_width'] = (df_monthly['upper_bb'] - df_monthly['lower_bb']) / df_monthly['MA20'].replace(0, np.nan)
+
+    daily_bb_str = analyze_bb_status(processed_data, "日线布林带")
+    weekly_bb_str = analyze_bb_status(df_weekly, "周线布林带")
+    monthly_bb_str = analyze_bb_status(df_monthly, "月线布林带")
+    # =======================================================
 
     req_beg_date = f"{beg[:4]}-{beg[4:6]}-{beg[6:]}"
     save_data = processed_data[processed_data['日期'] >= req_beg_date]
@@ -988,6 +1054,12 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     for key in ["股票代码", "股票名称", "所处行业", "最新财务报告期", "最新价", "涨跌幅", "换手率", "总市值", "近52周最高价", "近52周最低价"]:
         result.append(f"{key}: {all_metrics.get(key, 'N/A')}")
         
+    # 将多周期布林带状态加入到最终的文本中
+    result.append("\n### 【多周期布林带共振状态】")
+    result.append(f"- {daily_bb_str}")
+    result.append(f"- {weekly_bb_str}")
+    result.append(f"- {monthly_bb_str}")
+
     result.append("\n### 【量化策略信号矩阵】")
     result.append(json.dumps(strategy_signals, indent=2, ensure_ascii=False))
     
