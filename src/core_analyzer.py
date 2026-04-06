@@ -172,35 +172,48 @@ def run_core_analysis(
         except Exception as e:
             print(f"   ⚠️ 财报研读模块调用失败，已跳过: {e}")
             
-        # === 阶段 2.2：🌟 检索历史决策记忆库 (增强版) 🌟 ===
-        all_dates = get_all_output_dates()
-        # 过滤出早于当前日期的所有记录
-        past_dates = [d for d in all_dates if d < current_date_str]
+        # === 阶段 2.2：🌟 检索历史决策记忆库 (标的精准追溯版) 🌟 ===
+        # 1. 跨越所有日期文件夹，搜索该特定标的的所有输出文件
+        all_stock_files = glob.glob(f"output/*/{stock_code}_*_output_*.txt")
+        
+        valid_histories = []
+        for filepath in all_stock_files:
+            # 从文件路径中提取所在的日期文件夹名 (例如 '2026-04-03')
+            folder_date = os.path.basename(os.path.dirname(filepath))
+            
+            # 2. 过滤掉今天和未来的文件
+            if folder_date < current_date_str:
+                valid_histories.append({
+                    'date': folder_date,
+                    'path': filepath,
+                    'mtime': os.path.getmtime(filepath) # 用于同一天多次分析时的排序
+                })
+        
+        # 3. 按日期从新到旧（降序）排序，优先拿最近的
+        valid_histories.sort(key=lambda x: (x['date'], x['mtime']), reverse=True)
         
         history_texts = []
-        # 优化点：从取最近3条 ([:3]) 修改为取最近 10 条，以获得更连贯的策略视野
-        # 如果你想找“更早期”的，可以调整这里的逻辑，比如取 [5:15] 查看更早之前的
-        for d in past_dates[:10]: 
-            out_fs = glob.glob(f"output/{d}/{stock_code}_*_output_*_{d}.txt")
-            if out_fs:
-                try:
-                    # 优先按文件修改时间排序以确保读取的是该日最终决策
-                    latest_file = max(out_fs, key=os.path.getmtime)
-                    with open(latest_file, 'r', encoding='utf-8') as f:
-                        h_out = f.read()
-                    h_parsed = parse_llm_json(h_out)
-                    reasoning = h_parsed.get("reasoning") or h_parsed.get("原因")
-                    action = h_parsed.get("action") or h_parsed.get("操作")
-                    if reasoning and reasoning not in ["-", "暂无深度逻辑"]:
-                        # 截取推演逻辑的前 200 字防止上下文过载
-                        short_reasoning = (reasoning[:200] + '..') if len(reasoning) > 200 else reasoning
-                        history_texts.append(f"▶【日期：{d} | 历史动作：{action}】\n推演逻辑：{short_reasoning}")
-                except Exception:
-                    pass
-
+        # 4. 精准截取该标的最近的 3 次历史记录
+        for hist in valid_histories[:3]:
+            try:
+                with open(hist['path'], 'r', encoding='utf-8') as f:
+                    h_out = f.read()
+                h_parsed = parse_llm_json(h_out)
+                reasoning = h_parsed.get("reasoning") or h_parsed.get("原因")
+                action = h_parsed.get("action") or h_parsed.get("操作")
+                
+                if reasoning and reasoning not in ["-", "暂无深度逻辑"]:
+                    short_reasoning = (reasoning[:200] + '..') if len(reasoning) > 200 else reasoning
+                    # 带上时间标签
+                    history_texts.append(f"▶【历史时间：{hist['date']} | 历史动作：{action}】\n推演逻辑：{short_reasoning}")
+            except Exception:
+                pass
+                
         if history_texts:
+            # 5. 为了让 AI 总监按时间顺序阅读（从旧到新），将提取到的最近 3 条记录反转顺序
+            history_texts.reverse()
             history_str = "\n\n".join(history_texts)
-            print(f"   💡 成功提取到 {len(history_texts)} 条历史决策记忆，已注入 AI 裁判上下文。")
+            print(f"   💡 成功提取到 {len(history_texts)} 条针对该股的精准历史决策记忆！")
 
     # === 阶段 3：高级决议阶段 (MoA vs 单模型) ===
     if run_pro: 
