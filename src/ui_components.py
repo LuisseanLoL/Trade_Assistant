@@ -323,3 +323,55 @@ def parse_and_build_fin_and_quant_ui(input_text):
         formatted_news = "暂无新闻数据"
         
     return fin_ui, quant_ui, formatted_news
+
+def get_financial_report_ui(stock_code):
+    """直接从 log/financial_summaries/ 文件夹读取对应股票的财报 JSON 并构建 UI"""
+    import dash_bootstrap_components as dbc
+    from dash import html
+    import json_repair
+    import glob
+    import os
+
+    # 1. 查找该股票的财报文件
+    files = glob.glob(f"log/financial_summaries/{stock_code}_*_summary.json")
+    
+    if not files:
+        return html.Div("暂无深度财报解析数据", style={"color": "#adb5bd", "fontSize": "0.8rem", "textAlign": "center", "marginTop": "20px"})
+    
+    # 2. 获取最新的文件 (按文件名或修改时间排序)
+    latest_file = max(files)
+    
+    # 3. 读取并解析 JSON
+    report_dict = {}
+    try:
+        with open(latest_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+        report_dict = json_repair.loads(content)
+    except Exception as e:
+        print(f"读取或解析财报 JSON 失败: {e}")
+        return html.Div("财报数据解析失败，请检查文件格式", style={"color": "#f03e3e", "fontSize": "0.8rem", "textAlign": "center", "marginTop": "20px"})
+
+    # 4. 构建 UI 卡片
+    cards = []
+    for section_title, section_content in report_dict.items():
+        content_divs = []
+        if isinstance(section_content, dict):
+            for k, v in section_content.items():
+                val_color = "#495057"
+                if "评分" in k: val_color = "#f03e3e"
+                elif any(word in k for word in ["风险", "雷区", "偏差", "未达标"]): val_color = "#e64980"
+                elif "一致" in k or "高" in str(v): val_color = "#2f9e44"
+
+                content_divs.append(html.Div([
+                    html.Span(f"{k}：", style={"fontWeight": "bold", "color": "#4c6ef5", "fontSize": "0.75rem"}),
+                    html.Span(str(v), style={"color": val_color, "fontSize": "0.75rem", "lineHeight": "1.5"})
+                ], style={"marginBottom": "6px", "textAlign": "justify"}))
+        else:
+            content_divs.append(html.Div(str(section_content), style={"color": "#495057", "fontSize": "0.75rem", "lineHeight": "1.5", "textAlign": "justify"}))
+
+        cards.append(dbc.Card([
+            dbc.CardHeader(section_title, style={"padding": "6px 10px", "fontWeight": "bold", "fontSize": "0.8rem", "backgroundColor": "#f1f3f5", "color": "#343a40"}),
+            dbc.CardBody(content_divs, style={"padding": "10px"})
+        ], className="mb-2", style={"boxShadow": "none", "border": "1px solid #dee2e6"}))
+
+    return html.Div(cards, style={"height": "100%", "overflowY": "auto", "paddingRight": "5px"})

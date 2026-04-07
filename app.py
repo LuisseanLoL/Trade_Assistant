@@ -35,7 +35,7 @@ from src.utils import (
     parse_llm_json,
     create_advanced_kline_fig,
 )
-from src.ui_components import parse_and_build_macro_ui, parse_and_build_fin_and_quant_ui
+from src.ui_components import parse_and_build_macro_ui, parse_and_build_fin_and_quant_ui, get_financial_report_ui
 from src.core_analyzer import run_core_analysis
 
 # ==========================================
@@ -219,7 +219,16 @@ content = html.Div([
                     "backgroundColor": "#f8f9fa", "padding": "12px", "borderRadius": "6px"
                 })
             ], style={"padding": "10px", "height": "360px"})], style=CARD_STYLE), width=3),
-        ], className="gx-2")
+        ], className="gx-2"),
+
+        # ===== 【新增】财报深度研读卡片 =====
+        dbc.Row([
+            dbc.Col(dbc.Card([dbc.CardBody([
+                html.H6([html.I(className="fa-solid fa-file-contract me-2"), "大模型深度财报研读与战略评估"], className="fw-bold mb-2 text-secondary", style={"fontSize": "0.85rem"}),
+                html.Div(id="out-report-summary", style={"height": "810px", "overflowY": "auto", "overflowX": "hidden", "backgroundColor": "#ffffff"})
+            ], style={"padding": "10px"})], style=CARD_STYLE), width=12)
+        ], className="gx-2 mb-2"),
+        # ==================================
     ]),
 ], style=CONTENT_STYLE)
 
@@ -309,7 +318,8 @@ def update_table(active_tab): return load_daily_table_by_date(active_tab) if act
      Output("out-buy-price", "children"), Output("out-sell-price", "children"), Output("out-stop-price", "children"), Output("out-model-name", "children"),
      Output("out-cycle-strategy", "children"), 
      Output("out-reasoning", "children"), Output("out-news", "children"), 
-     Output("out-macro", "children"), Output("out-financial", "children"), Output("out-quant", "children"), 
+     Output("out-macro", "children"), Output("out-financial", "children"), 
+     Output("out-quant", "children"), Output("out-report-summary", "children"), # <--- 新增加的这一项
      Output("date-tabs", "children"), Output("date-tabs", "active_tab", allow_duplicate=True), Output("daily-table", "data", allow_duplicate=True)], 
     [Input("btn-analyze", "n_clicks"), Input("daily-table", "active_cell")],
     [State("input-stock-code", "value"), 
@@ -339,7 +349,7 @@ def update_table(active_tab): return load_daily_table_by_date(active_tab) if act
 )
 def unified_action_handler(set_progress, n_clicks, active_cell, stock_code, flash_model, use_pro_switch, pro_model, dual_filter_switch, moa_switch, committee_agents, position, cost, table_data, active_tab):
     ctx = dash.callback_context
-    if not ctx.triggered: return [dash.no_update] * 19
+    if not ctx.triggered: return [dash.no_update] * 20
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
     use_pro = bool(use_pro_switch)
@@ -387,7 +397,7 @@ def unified_action_handler(set_progress, n_clicks, active_cell, stock_code, flas
         return str(target_p)
     
     if trigger_id == 'daily-table':
-        if not active_cell or active_cell['column_id'] != '详情': return [dash.no_update] * 19
+        if not active_cell or active_cell['column_id'] != '详情': return [dash.no_update] * 20
         
         set_progress("正在从本地读取历史决策日志与行情数据...")
         
@@ -407,6 +417,7 @@ def unified_action_handler(set_progress, n_clicks, active_cell, stock_code, flas
         
         macro_ui = parse_and_build_macro_ui(h_in)
         fin_ui, quant_ui, news_t = parse_and_build_fin_and_quant_ui(h_in)
+        report_ui = get_financial_report_ui(h_stock) # <--- 新增
         parsed = parse_llm_json(h_out)
         
         beg, end = (datetime.strptime(h_date, "%Y-%m-%d") - timedelta(days=180)).strftime("%Y%m%d"), h_date.replace('-', '')
@@ -425,9 +436,9 @@ def unified_action_handler(set_progress, n_clicks, active_cell, stock_code, flas
         stop_display = get_price_display(stop_p, buy_p)
         buy_display = str(buy_p) if buy_p else "-"
         
-        return fig, f"{h_stock_name} ({h_stock})", format_dynamic_color(parsed.get("action"), True), format_dynamic_color(parsed.get("expectation"), False), parsed.get("pos_adv"), parsed.get("confidence"), buy_display, sell_display, stop_display, disp_model, parsed.get("cycle_strategy", "-"), parsed.get("reasoning"), news_t, macro_ui, fin_ui, quant_ui, dash.no_update, dash.no_update, dash.no_update
+        return fig, f"{h_stock_name} ({h_stock})", format_dynamic_color(parsed.get("action"), True), format_dynamic_color(parsed.get("expectation"), False), parsed.get("pos_adv"), parsed.get("confidence"), buy_display, sell_display, stop_display, disp_model, parsed.get("cycle_strategy", "-"), parsed.get("reasoning"), news_t, macro_ui, fin_ui, quant_ui, report_ui, dash.no_update, dash.no_update, dash.no_update
 
-    if not stock_code: return [dash.no_update] * 19
+    if not stock_code: return [dash.no_update] * 20
     
     set_progress(f"正在初始化分析引擎，目标标的：{stock_code}...")
     
@@ -467,6 +478,7 @@ def unified_action_handler(set_progress, n_clicks, active_cell, stock_code, flas
 
     macro_ui = parse_and_build_macro_ui(user_msg)
     fin_ui, quant_ui, news_t = parse_and_build_fin_and_quant_ui(user_msg)
+    report_ui = get_financial_report_ui(stock_code) # <--- 新增
 
     sell_display = get_price_display(sell_p, buy_p)
     stop_display = get_price_display(stop_p, buy_p)
@@ -490,6 +502,7 @@ def unified_action_handler(set_progress, n_clicks, active_cell, stock_code, flas
         macro_ui, 
         fin_ui, 
         quant_ui, 
+        report_ui, # <--- 新增，插在 quant_ui 和 tabs 之间
         [dbc.Tab(label=date, tab_id=date) for date in get_all_output_dates()[:20]], 
         c_str, 
         load_daily_table_by_date(c_str)
