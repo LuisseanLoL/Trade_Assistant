@@ -153,21 +153,26 @@ def main():
     # 变量初始化
     pro_model = flash_model
     committee_model = flash_model 
-    dual_filter = False # 默认先设为 False
+    dual_filter = False 
     use_moa = False
     committee_agents = []
 
     if use_pro:
+        # === 独立配置项 1：是否启用双筛拦截（初筛） ===
+        dual_filter = questionary.confirm(
+            "【步骤 3.1】是否启用【双重筛选过滤】？\n(让基础模型先过一遍，只有给出明确交易方向才去惊动终审模型/大师)", 
+            default=True
+        ).ask()
+        if dual_filter is None: return
+
+        # === 独立配置项 2：是否启用 MoA ===
         use_moa = questionary.confirm(
-            "【步骤 3.1】终审机制：是否升级为【MoA 多大师联合议事】？\n(选No则使用单发大模型复盘)", 
+            "【步骤 3.2】终审机制：是否升级为【MoA 多大师联合议事】？\n(选No则使用单发大模型复盘)", 
             default=True
         ).ask()
         if use_moa is None: return
 
         if use_moa:
-            # === MoA 模式：互斥关闭双筛 ===
-            dual_filter = False 
-            
             agent_choices = get_agent_options()
             if not agent_choices:
                 print("⚠️ 未在 agents_text/ 目录下检测到大师人设文件，已自动退化为单模型复盘模式。")
@@ -185,34 +190,27 @@ def main():
             
             if use_moa:
                 committee_model = questionary.select(
-                    "请选择【MoA：议事会模型】(并发扮演上述大师角色)：",
+                    "请选择【MoA：议事会模型】(并发扮演上述大师角色，如 Qwen-Plus)：",
                     choices=model_choices,
                     pointer="👉"
                 ).ask()
                 if committee_model is None: return
 
                 pro_model = questionary.select(
-                    "请选择【MoA：最终拍板裁判】(投资总监，建议用推理最强模型)：",
+                    "请选择【MoA：最终拍板裁判】(投资总监，建议用最强推理模型如 DeepSeek-R1)：",
                     choices=model_choices,
                     pointer="👉"
                 ).ask()
                 if pro_model is None: return
         
-        # 注意这里是单独的 if，如果上面 MoA 失败退化，或者用户选了 No，都会进入这里
+        # 如果未启用 MoA，或者 MoA 降级，则选择单发终审模型
         if not use_moa:
             pro_model = questionary.select(
-                "请选择【单发：终审高级模型】(如 DeepSeek 或 Gemini-Pro)：",
+                "请选择【单发：终审高级模型】(如 DeepSeek-R1)：",
                 choices=model_choices,
                 pointer="👉"
             ).ask()
             if pro_model is None: return
-            
-            # === 单模型模式：允许用户选择是否双筛（对齐 app.py） ===
-            dual_filter = questionary.confirm(
-                "【步骤 3.2】是否启用【双重筛选过滤】？\n(在初筛模型后，要求其明确给出交易方向才触发终审)", 
-                default=True
-            ).ask()
-            if dual_filter is None: return
 
     print("\n" + "="*50 + "\n")
 
