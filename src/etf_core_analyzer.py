@@ -2,6 +2,7 @@
 import os
 import re
 import concurrent.futures
+import threading
 import time
 import pandas as pd
 import glob
@@ -83,7 +84,39 @@ def run_etf_core_analysis(
     with open(f"input_etf/{current_date_str}/{etf_code}_{safe_s_name}_input_{current_date_str}.txt", 'w', encoding='utf-8') as f: 
         f.write(user_msg)
 
-    # 加载系统提示词 (注意读取的是 ETF 专属提示词)
+    # ==========================================
+    # 🌟 并发启动：大模型底层资产穿透与战略评估
+    # ==========================================
+    deep_analysis_result = ["暂未生成深度分析报告"]
+    def generate_deep_analysis():
+        try:
+            sys_p = "你是一名顶尖的ETF投研专家，擅长底层资产穿透与宏观大周期定调。"
+            
+            clean_msg = user_msg.split("请记住，行动必须是买入")[0].strip()
+            
+            user_p = f"请基于以下ETF客观数据与新闻，撰写一份专业的《大模型底层资产穿透与战略评估报告》（支持Markdown排版，字数约800-1000字）。\n\n" \
+                     f"要求重点分析：\n" \
+                     f"1. 【底层重仓资产穿透】：分析前十大重仓股的业务共性及其所处的产业生命周期。\n" \
+                     f"2. 【宏观大盘与行业共振】：结合当前宏观数据评估该ETF所处赛道的战略胜率。\n" \
+                     f"3. 【资金博弈动向】：深度解读近期场内份额申赎变动背后的机构与国家队意图。\n" \
+                     f"4. 【综合战略定调】：给出明确的长线配置建议。\n\n" \
+                     f"【🛑极度重要的强制规范】：\n" \
+                     f"不要输出任何 JSON 代码！不要输出买卖信号字典！必须且只能输出一篇结构流畅、文笔专业的 Markdown 中文分析长文。\n\n" \
+                     f"输入数据如下：\n{clean_msg}"
+                     
+            # 🌟 核心修复：必须加上 schema=None 彻底解除 JSON 格式束缚
+            res = get_LLM_message(system_content=sys_p, user_message=user_p, model_id=pro_model, schema=None)
+            
+            deep_analysis_result[0] = res
+            with open(f"output_etf/{current_date_str}/{etf_code}_{safe_s_name}_deep_analysis_{current_date_str}.md", 'w', encoding='utf-8') as f:
+                f.write(res)
+        except Exception as e:
+            deep_analysis_result[0] = f"深度分析生成失败: {e}"
+
+    deep_thread = threading.Thread(target=generate_deep_analysis)
+    deep_thread.start()
+
+    # 加载系统提示词
     try:
         with open('ETF LLM system content.txt', 'r', encoding='utf-8') as f: 
             sys_content = f.read()
@@ -180,7 +213,7 @@ def run_etf_core_analysis(
             
             def agent_task(agent_name):
                 try:
-                    with open(f"src/agents_text/{agent_name}.txt", "r", encoding="utf-8") as f:
+                    with open(f"src/agents_text/ETF_agents/{agent_name}.txt", "r", encoding="utf-8") as f:
                         agent_persona = f.read()
                     agent_sys_content = f"{agent_persona}\n\n====================\n以下是系统级硬性约束，你必须严格遵守：\n{format_rules}"
                     return get_LLM_message(system_content=agent_sys_content, user_message=user_msg, model_id=committee_model)
@@ -198,7 +231,7 @@ def run_etf_core_analysis(
                     except Exception as e:
                         committee_results[agent_name] = f"分析失败：{e}"
             
-            # 构建总监裁判提示词 (针对 ETF 极致优化版)
+            # 构建总监裁判提示词 
             judge_msg = f"{user_msg}\n\n"
             judge_msg += "=================================\n"
             judge_msg += "【投资总监（AI裁判）专属决议指令】\n"
@@ -214,7 +247,6 @@ def run_etf_core_analysis(
             judge_msg += "3. 申赎资金的终极底牌：ETF 场内份额的净申赎是看透主力意图的底牌。在左侧阴跌中看到连续大额净申购是主力（国家队/机构）托底护盘；在右侧暴涨中看到净赎回是主力套现。切勿忽略这一核心数据的指引。\n"
             judge_msg += "4. 拒绝无效瘫痪（果断决策）：不要因为大师存在分歧就本能地退缩到‘观望’。在剔除幻觉意见后，评估盈亏比，勇敢给出具体的买入/卖出、观望指令和明确的点位。\n\n"
 
-            # 🌟 历史记忆注入，带有强烈的战略连贯性暗示
             if history_str:
                 judge_msg += f"=================================\n【总监个人历史记忆库】\n系统调取了你（总监）前几日对该 ETF 做出的深度推演，请以此作为连贯性参考：\n{history_str}\n\n（特别注意：请对照最新大师意见与今日最新盘面，审视你原先的宏观定调和策略逻辑是否被证伪。保持体系的连贯性；若周期发生根本反转，请果断纠错！）\n\n"
 
@@ -267,7 +299,6 @@ def run_etf_core_analysis(
             rr_str = f"{(float(sell_p) - float(buy_p)) / (float(buy_p) - float(stop_p)):.2f}:1"
     except: pass
 
-    # 保存日志 (与个股类似，但保存在 output_etf)
     csv_path = f"output_etf/{current_date_str}/ETF_Daily_Table_{current_date_str}.csv"
     pd.DataFrame([{
         "ETF代码": etf_code, "ETF名称": s_name, "决策模型": disp_model, "当前价格": s_price, 
@@ -281,4 +312,7 @@ def run_etf_core_analysis(
         "回报风险比": rr_str
     }]).to_csv(csv_path, index=False, header=not os.path.exists(csv_path), mode='a', encoding='utf-8-sig')
 
-    return df_chart, s_name, s_price, parsed, disp_model, user_msg, res_text
+    # 🌟 等待深度研读后台线程执行完毕
+    deep_thread.join()
+
+    return df_chart, s_name, s_price, parsed, disp_model, user_msg, res_text, deep_analysis_result[0]

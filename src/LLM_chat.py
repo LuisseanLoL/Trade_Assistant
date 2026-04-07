@@ -196,8 +196,8 @@ def gemini_chat(system_content, user_message, model, api_key, is_vertex=False, u
         adapt_schema_for_gemini(gemini_schema)
         config_kwargs["response_schema"] = gemini_schema
     else:
-        # 🌟 核心修改：如果 schema 为 None，只要求返回 JSON 格式，不限制具体字段
-        config_kwargs["response_mime_type"] = "application/json"
+        # 🌟 核心修改：当不需要 schema 时，必须解除底层的 JSON 强制约束，允许输出纯文本长文
+        config_kwargs["response_mime_type"] = "text/plain"
 
     if tools:
         config_kwargs["tools"] = tools

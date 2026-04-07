@@ -10,7 +10,6 @@ import re
 import glob
 import random
 import logging
-import json
 from dash import DiskcacheManager
 import diskcache
 from dotenv import load_dotenv
@@ -70,34 +69,42 @@ def load_etf_daily_table_by_date(date_str):
 
 def build_etf_macro_ui(etf_context_str):
     """针对 ETF 数据流构建宏观大盘面板"""
-    trend, rsi, z_score = "-", "-", "-"
-    if "情绪指标(RSI14):" in etf_context_str: rsi = etf_context_str.split("情绪指标(RSI14):")[1].split('\n')[0].strip()
-    if "均线偏离(Z-Score):" in etf_context_str: z_score = etf_context_str.split("均线偏离(Z-Score):")[1].split('\n')[0].strip()
-    if "赫斯特指数:" in etf_context_str: trend = etf_context_str.split("赫斯特指数:")[1].split('\n')[0].strip()
+    trend, rsi, pe_val = "-", "-", "-"
+    
+    # 修复点：使用正则匹配新的宏观文本格式
+    import re
+    trend_match = re.search(r"趋势与量能:\s*([^\(；]+)", etf_context_str)
+    pe_match = re.search(r"估值与钟摆:.*?PE\(TTM\):\s*([\d\.]+)", etf_context_str)
+    rsi_match = re.search(r"情绪与通道:.*?RSI14=([\d\.]+)", etf_context_str)
 
-    trend_color, rsi_color, z_color = "#2d3748", "#2d3748", "#2d3748"
+    if trend_match: trend = trend_match.group(1).strip()
+    if pe_match: pe_val = pe_match.group(1).strip()
+    if rsi_match: rsi = rsi_match.group(1).strip()
+
+    trend_color, rsi_color, pe_color = "#2d3748", "#2d3748", "#2d3748"
     try:
-        rsi_num = float(re.sub(r'[^\d\.-]', '', rsi.split('(')[0]))
+        rsi_num = float(rsi)
         if rsi_num > 70: rsi_color = "#f03e3e"
         elif rsi_num < 30: rsi_color = "#2f9e44"
     except: pass
     try:
-        z_num = float(re.sub(r'[^\d\.-]', '', z_score.split('(')[0]))
-        if z_num > 2: z_color = "#f03e3e"
-        elif z_num < -2: z_color = "#2f9e44"
+        # PE 分位通常偏高标红
+        pe_num = float(pe_val)
+        if pe_num > 40: pe_color = "#f03e3e"
+        elif pe_num < 15: pe_color = "#2f9e44"
     except: pass
 
     def mini_kpi(label, val, color="#495057"):
         return html.Div([
             html.Div(label, style={"fontSize": "0.7rem", "color": "#868e96"}),
-            html.Div(val.split('(')[0].strip() if '(' in val else val, style={"fontSize": "0.95rem", "fontWeight": "bold", "color": color})
+            html.Div(val, style={"fontSize": "0.95rem", "fontWeight": "bold", "color": color})
         ], style={"backgroundColor": "#f8f9fa", "padding": "4px", "borderRadius": "4px", "textAlign": "center"})
 
     return html.Div([
         html.Div(dcc.Graph(figure=get_index_kline_fig(), config={'displayModeBar': False, 'responsive': True}, style={"position": "absolute", "top": 0, "left": 0, "width": "100%", "height": "100%"}), style={"flexGrow": 1, "position": "relative", "minHeight": "200px"}),
         html.Div([
-            dbc.Row([dbc.Col(mini_kpi("上证指数", "参考图表", "#f03e3e"), width=6, className="pe-1"), dbc.Col(mini_kpi("赫斯特趋势", trend, trend_color), width=6, className="ps-1")], className="mb-1"),
-            dbc.Row([dbc.Col(mini_kpi("RSI情绪", rsi, rsi_color), width=6, className="pe-1"), dbc.Col(mini_kpi("偏离度", z_score, z_color), width=6, className="ps-1")]),
+            dbc.Row([dbc.Col(mini_kpi("上证指数", "参考图表", "#f03e3e"), width=6, className="pe-1"), dbc.Col(mini_kpi("估值中位数", pe_val, pe_color), width=6, className="ps-1")], className="mb-1"),
+            dbc.Row([dbc.Col(mini_kpi("大盘情绪", rsi, rsi_color), width=6, className="pe-1"), dbc.Col(mini_kpi("趋势定调", trend, trend_color), width=6, className="ps-1")]),
         ], style={"flexShrink": 0, "marginTop": "10px"})
     ], style={"height": "100%", "minHeight": "320px", "display": "flex", "flexDirection": "column"})
 
@@ -107,39 +114,96 @@ def build_etf_fin_quant_ui(etf_context_str, news_text):
     import json_repair
 
     # ==========================================
-    # 1. 动态解析 ETF 核心档案 (双列网格布局)
+    # 1. 动态解析 ETF 核心档案 (多维精细化分类提取)
     # ==========================================
-    profile_dict = {}
-    if "【1." in etf_context_str and "基金概况】" in etf_context_str:
-        try:
-            # 截取 【1. xxx 基金概况】 到下一个 ====== 之间的内容
-            block = etf_context_str.split("基金概况】")[1].split("======")[0].strip()
-            for line in block.split('\n'):
-                if ':' in line or '：' in line:
-                    parts = line.replace('：', ':').split(':', 1)
-                    if len(parts) == 2:
-                        k, v = parts[0].strip(), parts[1].strip()
-                        if k and v:
-                            profile_dict[k] = v
-        except Exception as e:
-            print("解析基金概况报错:", e)
-            
-    def f_item(label, val):
-        return html.Div([
-            html.Div(label, style={"color": "#868e96", "fontSize": "0.7rem", "whiteSpace": "nowrap"}),
-            html.Div(val, style={"color": "#2d3748", "fontWeight": "bold", "fontSize": "0.8rem", "wordBreak": "break-all"})
-        ], className="col-6 mb-2", style={"textAlign": "left"}) 
+    import re
+    
+    basic_info, flow_info, ind_info, holdings_info = {}, {}, {}, {}
 
-    profile_items = [f_item(k, v) for k, v in profile_dict.items()]
-    if not profile_items:
-        profile_items = [html.Div("暂无档案数据", style={"color": "#adb5bd", "fontSize": "0.8rem", "padding": "10px"})]
+    # 提取1: 基础概况 (过滤提取重要指标)
+    match_basic = re.search(r"====== 【1\..*?基金概况】 ======\s*(.*?)\s*(?:======|$)", etf_context_str, re.DOTALL)
+    if match_basic:
+        for line in match_basic.group(1).split('\n'):
+            if ':' in line or '：' in line:
+                k, v = line.replace('：', ':').split(':', 1)
+                k, v = k.strip(), v.strip()
+                if k in ['基金简称', '成立日期', '基金经理', '总费率(最高/持有一年)', '基金风格']:
+                    basic_info[k.replace('(最高/持有一年)', '')] = v
 
+    # 提取2: 份额动向 (取最近一天)
+    match_flow = re.search(r"====== 【2\..*?份额变动.*?】 ======\s*(.*?)\s*(?:======|$)", etf_context_str, re.DOTALL)
+    if match_flow:
+        lines = [line for line in match_flow.group(1).split('\n') if line.strip().startswith("202")]
+        if lines:
+            parts = [p.strip() for p in lines[0].split('|') if p.strip()]
+            if len(parts) >= 4:
+                flow_info["最新单日申赎"] = f"{parts[2]}万份 ({parts[3]}%)"
+
+    # 提取3: 行业分布 (取前3大行业)
+    match_ind = re.search(r"====== 【3\..*?行业分布配置】 ======\s*(.*?)\s*(?:======|$)", etf_context_str, re.DOTALL)
+    if match_ind:
+        count = 0
+        for line in match_ind.group(1).split('\n'):
+            parts = [p.strip() for p in line.split('|') if p.strip()]
+            if len(parts) >= 5 and parts[0].isdigit():
+                # 截断过长的行业名称
+                ind_name = parts[2] if len(parts[2]) <= 8 else parts[2][:7] + ".."
+                ind_info[ind_name] = parts[4] + "%"
+                count += 1
+                if count >= 3: break
+
+    # 提取4: 重仓股明细 (取前6大重仓)
+    match_holdings = re.search(r"====== 【4\..*?重仓股明细.*?】 ======\s*(.*?)\s*(?:======|$)", etf_context_str, re.DOTALL)
+    if match_holdings:
+        count = 0
+        for line in match_holdings.group(1).split('\n'):
+            parts = [p.strip() for p in line.split('|') if p.strip()]
+            if len(parts) >= 6 and parts[0].isdigit():
+                holdings_info[parts[1]] = parts[5] + "%"
+                count += 1
+                if count >= 6: break
+
+    # UI 构建辅助函数
+    def create_grid(data_dict, cols=2):
+        if not data_dict:
+            return html.Div("暂无数据", style={"color": "#adb5bd", "fontSize": "0.75rem"})
+        items = []
+        for k, v in data_dict.items():
+            val_color = "#2d3748"
+            if "万份" in str(v):
+                val_color = "#f03e3e" if "-" not in str(v) else "#2f9e44"
+            items.append(html.Div([
+                html.Div(k, style={"color": "#868e96", "fontSize": "0.7rem", "whiteSpace": "nowrap", "overflow": "hidden", "textOverflow": "ellipsis"}),
+                html.Div(v, style={"color": val_color, "fontWeight": "bold", "fontSize": "0.75rem", "whiteSpace": "nowrap", "overflow": "hidden", "textOverflow": "ellipsis"})
+            ], className=f"col-{12//cols} mb-1", style={"textAlign": "left", "paddingRight": "2px"}))
+        return dbc.Row(items, className="gx-0 mb-0")
+
+    # 拼接区块模块
     fin_ui = html.Div([
+        # 1. 基础概况
         html.Div([
-            html.H6("ETF 核心概况", style={"fontSize": "0.75rem", "fontWeight": "bold", "color": "#495057", "marginBottom": "8px", "paddingBottom": "4px", "borderBottom": "1px solid #e9ecef"}),
-            dbc.Row(profile_items, className="gx-2 mb-0")
-        ], style={"backgroundColor": "#f8f9fa", "padding": "12px", "borderRadius": "6px", "marginBottom": "6px"}),
-    ])
+            html.H6("📌 基础属性", style={"fontSize": "0.75rem", "fontWeight": "bold", "color": "#495057", "marginBottom": "4px"}),
+            create_grid(basic_info, cols=2)
+        ], style={"borderBottom": "1px dashed #dee2e6", "marginBottom": "6px", "paddingBottom": "4px"}),
+        
+        # 2. 资金与份额
+        html.Div([
+            html.H6("💰 资金动向", style={"fontSize": "0.75rem", "fontWeight": "bold", "color": "#495057", "marginBottom": "4px"}),
+            create_grid(flow_info, cols=1)
+        ], style={"borderBottom": "1px dashed #dee2e6", "marginBottom": "6px", "paddingBottom": "4px"}),
+
+        # 3. 行业分布
+        html.Div([
+            html.H6("📊 主力行业 (Top 3)", style={"fontSize": "0.75rem", "fontWeight": "bold", "color": "#495057", "marginBottom": "4px"}),
+            create_grid(ind_info, cols=3)
+        ], style={"borderBottom": "1px dashed #dee2e6", "marginBottom": "6px", "paddingBottom": "4px"}),
+        
+        # 4. 重仓股
+        html.Div([
+            html.H6("🎯 核心重仓 (Top 6)", style={"fontSize": "0.75rem", "fontWeight": "bold", "color": "#495057", "marginBottom": "4px"}),
+            create_grid(holdings_info, cols=3)
+        ])
+    ], style={"backgroundColor": "#f8f9fa", "padding": "10px", "borderRadius": "6px", "marginBottom": "6px"})
 
     # ==========================================
     # 2. 深度解析量化信号矩阵 (带具体指标副标题)
@@ -153,7 +217,6 @@ def build_etf_fin_quant_ui(etf_context_str, news_text):
             if s_idx != -1 and e_idx != -1:
                 signals = json_repair.loads(json_str[s_idx:e_idx+1])
                 
-                # 🌟 修复点：转为列表，利用 enumerate 提前判断是否是最后一项
                 signal_items = list(signals.items())
                 for i, (category, data) in enumerate(signal_items):
                     sig = data.get("信号", "-")
@@ -167,7 +230,6 @@ def build_etf_fin_quant_ui(etf_context_str, news_text):
                     detail_texts = [f"{dk}: {dv}" for dk, dv in details.items()]
                     detail_str = " | ".join(detail_texts) if detail_texts else "无细节指标"
                     
-                    # 如果是最后一项，去掉底边框
                     border_style = "none" if i == len(signal_items) - 1 else "1px dashed #dee2e6"
                     
                     quant_ui_elements.append(
@@ -188,7 +250,6 @@ def build_etf_fin_quant_ui(etf_context_str, news_text):
         lines = [line for line in block.split('\n') if ':' in line and '信号矩阵' not in line]
         for i, line in enumerate(lines):
             k, v = line.split(':', 1)
-            # 同样修复这里的边界判断
             border_style = "none" if i == len(lines) - 1 else "1px dashed #dee2e6"
             quant_ui_elements.append(
                 html.Div([
@@ -373,7 +434,22 @@ content = html.Div([
                     "backgroundColor": "#f8f9fa", "padding": "12px", "borderRadius": "6px"
                 })
             ], style={"padding": "10px", "height": "360px"})], style=CARD_STYLE), width=3),
-        ], className="gx-2")
+        ], className="gx-2"),
+
+        # ===== 【新增】ETF 深度研读卡片 =====
+        dbc.Row([
+            dbc.Col(dbc.Card([dbc.CardBody([
+                html.H6([html.I(className="fa-solid fa-file-contract me-2"), "大模型底层资产穿透与战略评估"], className="fw-bold mb-2 text-secondary", style={"fontSize": "0.85rem"}),
+                html.Div(dcc.Markdown(id="out-report-summary", style={
+                    "fontSize": "0.85rem", "color": "#343a40", "whiteSpace": "pre-wrap", 
+                    "lineHeight": "1.75", "margin": "0"
+                }), style={
+                    "height": "810px", "overflowY": "auto", "overflowX": "hidden", 
+                    "backgroundColor": "#f8f9fa", "padding": "15px", "borderRadius": "6px"
+                })
+            ], style={"padding": "10px"})], style=CARD_STYLE), width=12)
+        ], className="gx-2 mb-2"),
+        # ==================================
     ]),
 ], style=CONTENT_STYLE)
 
@@ -449,6 +525,7 @@ def update_table(active_tab): return load_etf_daily_table_by_date(active_tab) if
      Output("out-cycle-strategy", "children"), 
      Output("out-reasoning", "children"), Output("out-news", "children"), 
      Output("out-macro", "children"), Output("out-financial", "children"), Output("out-quant", "children"), 
+     Output("out-report-summary", "children"), # 🌟 扩充输出参数 (对应长文卡片)
      Output("date-tabs", "children"), Output("date-tabs", "active_tab", allow_duplicate=True), Output("daily-table", "data", allow_duplicate=True)], 
     [Input("btn-analyze", "n_clicks"), Input("daily-table", "active_cell")],
     [State("input-stock-code", "value"), 
@@ -465,7 +542,7 @@ def update_table(active_tab): return load_etf_daily_table_by_date(active_tab) if
 )
 def unified_action_handler(set_progress, n_clicks, active_cell, stock_code, flash_model, use_pro_switch, pro_model, dual_filter_switch, moa_switch, committee_agents, position, cost, table_data, active_tab):
     ctx = dash.callback_context
-    if not ctx.triggered: return [dash.no_update] * 19
+    if not ctx.triggered: return [dash.no_update] * 20
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
     use_pro, dual_filter, use_moa = bool(use_pro_switch), bool(dual_filter_switch), bool(moa_switch)
@@ -499,7 +576,7 @@ def unified_action_handler(set_progress, n_clicks, active_cell, stock_code, flas
     
     # 历史档案点击
     if trigger_id == 'daily-table':
-        if not active_cell or active_cell['column_id'] != '详情': return [dash.no_update] * 19
+        if not active_cell or active_cell['column_id'] != '详情': return [dash.no_update] * 20
         set_progress("正在从本地读取 ETF 历史决策日志与行情数据...")
         
         row_data = table_data[active_cell['row']]
@@ -507,7 +584,7 @@ def unified_action_handler(set_progress, n_clicks, active_cell, stock_code, flas
         
         in_fs, out_fs = glob.glob(f"input_etf/{h_date}/{h_stock}_*_input_{h_date}.txt"), glob.glob(f"output_etf/{h_date}/{h_stock}_*_output_*_{h_date}.txt")
         if not in_fs or not out_fs: 
-            return go.Figure(), f"{h_stock_name} ({h_stock})", "-", "-", "-", "-", "-", "-", "-", "-", "-", "未能找到历史文本文件！", "-", "-", "-", "-", dash.no_update, dash.no_update, dash.no_update
+            return go.Figure(), f"{h_stock_name} ({h_stock})", "-", "-", "-", "-", "-", "-", "-", "-", "-", "未能找到历史文本文件！", "-", "-", "-", "-", "-", dash.no_update, dash.no_update, dash.no_update
         
         try: m_tag = os.path.basename(out_fs[0]).split('_output_')[1].rsplit('_', 1)[0]
         except: m_tag = "-"
@@ -515,6 +592,14 @@ def unified_action_handler(set_progress, n_clicks, active_cell, stock_code, flas
         with open(in_fs[0], 'r', encoding='utf-8') as f: h_in = f.read()
         with open(out_fs[0], 'r', encoding='utf-8') as f: h_out = f.read()
         
+        # 🌟 载入深读报告
+        deep_fs = glob.glob(f"output_etf/{h_date}/{h_stock}_*_deep_analysis_{h_date}.md")
+        deep_text = "该历史档案无深度研读记录。"
+        if deep_fs:
+            try:
+                with open(deep_fs[0], 'r', encoding='utf-8') as f: deep_text = f.read()
+            except: pass
+
         try: news_t = h_in.split("相关新闻如下：")[1].split("当前该ETF持仓：")[0].strip()
         except: news_t = "历史新闻提取失败"
 
@@ -527,12 +612,7 @@ def unified_action_handler(set_progress, n_clicks, active_cell, stock_code, flas
         if os.path.exists(csv_path):
             df_chart = pd.read_csv(csv_path).rename(columns={'日期': 'date', '开盘': 'open', '最高': 'high', '最低': 'low', '收盘': 'close', '成交量': 'volume'})
             fig = create_advanced_kline_fig(df_chart)
-
-            # 🌟 修改点 1：增加中文键值的兼容获取
-            buy_p = parsed.get("buy_p") or parsed.get("建议买入价")
-            sell_p = parsed.get("sell_p") or parsed.get("目标卖出价")
-            stop_p = parsed.get("stop_p") or parsed.get("建议止损价")
-
+            buy_p, sell_p, stop_p = parsed.get("buy_p") or parsed.get("建议买入价"), parsed.get("sell_p") or parsed.get("目标卖出价"), parsed.get("stop_p") or parsed.get("建议止损价")
             if buy_p and str(buy_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(buy_p), line_dash="dot", line_color="#be4bdb", annotation_text="买点", row=1, col=1)
             if sell_p and str(sell_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(sell_p), line_dash="dot", line_color="#f03e3e", annotation_text="目标", row=1, col=1)
             if stop_p and str(stop_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(stop_p), line_dash="dot", line_color="#37b24d", annotation_text="止损", row=1, col=1)
@@ -540,14 +620,15 @@ def unified_action_handler(set_progress, n_clicks, active_cell, stock_code, flas
         buy_p = parsed.get("buy_p") or parsed.get("建议买入价")
         sell_p = parsed.get("sell_p") or parsed.get("目标卖出价")
         stop_p = parsed.get("stop_p") or parsed.get("建议止损价")
-        return fig, f"{h_stock_name} ({h_stock})", format_dynamic_color(parsed.get("action"), True), format_dynamic_color(parsed.get("expectation"), False), parsed.get("pos_adv"), parsed.get("confidence"), str(buy_p) if buy_p else "-", get_price_display(sell_p, buy_p), get_price_display(stop_p, buy_p), get_display_model_name(m_tag), parsed.get("cycle_strategy", "-"), parsed.get("reasoning"), news_ui, macro_ui, fin_ui, quant_ui, dash.no_update, dash.no_update, dash.no_update
+        
+        return fig, f"{h_stock_name} ({h_stock})", format_dynamic_color(parsed.get("action"), True), format_dynamic_color(parsed.get("expectation"), False), parsed.get("pos_adv"), parsed.get("confidence"), str(buy_p) if buy_p else "-", get_price_display(sell_p, buy_p), get_price_display(stop_p, buy_p), get_display_model_name(m_tag), parsed.get("cycle_strategy", "-"), parsed.get("reasoning"), news_ui, macro_ui, fin_ui, quant_ui, deep_text, dash.no_update, dash.no_update, dash.no_update
 
     # 新分析
-    if not stock_code: return [dash.no_update] * 19
+    if not stock_code: return [dash.no_update] * 20
     c_date = get_logical_date().strftime("%Y-%m-%d")
     
     # 核心解耦调用
-    df_chart, s_name, s_price, parsed, disp_model, user_msg, res_text = run_etf_core_analysis(
+    df_chart, s_name, s_price, parsed, disp_model, user_msg, res_text, deep_text = run_etf_core_analysis(
         etf_code=stock_code, position=position, cost=cost, current_date_str=c_date,
         flash_model=flash_model, use_pro=use_pro, pro_model=pro_model, dual_filter=dual_filter,
         use_moa=use_moa, committee_agents=committee_agents, committee_model=flash_model,
@@ -559,11 +640,7 @@ def unified_action_handler(set_progress, n_clicks, active_cell, stock_code, flas
     fig = go.Figure()
     if not df_chart.empty:
         fig = create_advanced_kline_fig(df_chart)
-
-        buy_p = parsed.get("buy_p") or parsed.get("建议买入价")
-        sell_p = parsed.get("sell_p") or parsed.get("目标卖出价")
-        stop_p = parsed.get("stop_p") or parsed.get("建议止损价")
-
+        buy_p, sell_p, stop_p = parsed.get("buy_p") or parsed.get("建议买入价"), parsed.get("sell_p") or parsed.get("目标卖出价"), parsed.get("stop_p") or parsed.get("建议止损价")
         if buy_p and str(buy_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(buy_p), line_dash="dot", line_color="#be4bdb", annotation_text="买点", row=1, col=1)
         if sell_p and str(sell_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(sell_p), line_dash="dot", line_color="#f03e3e", annotation_text="目标", row=1, col=1)
         if stop_p and str(stop_p).replace('.', '', 1).isdigit(): fig.add_hline(y=float(stop_p), line_dash="dot", line_color="#37b24d", annotation_text="止损", row=1, col=1)
@@ -583,7 +660,7 @@ def unified_action_handler(set_progress, n_clicks, active_cell, stock_code, flas
         format_dynamic_color(parsed.get("expectation") or parsed.get("预期"), False), parsed.get("pos_adv") or parsed.get("建议仓位"), 
         parsed.get("confidence") or parsed.get("置信度"), str(buy_p) if buy_p else "-", get_price_display(sell_p, buy_p), get_price_display(stop_p, buy_p), 
         disp_model, parsed.get("cycle_strategy") or parsed.get("周期与策略", "-"), parsed.get("reasoning") or parsed.get("原因"), 
-        news_ui, macro_ui, fin_ui, quant_ui, [dbc.Tab(label=date, tab_id=date) for date in get_all_etf_output_dates()[:20]], c_date, load_etf_daily_table_by_date(c_date)
+        news_ui, macro_ui, fin_ui, quant_ui, deep_text, [dbc.Tab(label=date, tab_id=date) for date in get_all_etf_output_dates()[:20]], c_date, load_etf_daily_table_by_date(c_date)
     )
 
 if __name__ == '__main__':
