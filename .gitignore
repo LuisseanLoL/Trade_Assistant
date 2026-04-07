@@ -22,6 +22,7 @@ test/
 arena_results/
 key/
 cache/
+cache_etf/
 
 portfolio.csv
 test.ipynb
