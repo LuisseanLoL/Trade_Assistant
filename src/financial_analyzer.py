@@ -220,7 +220,7 @@ def slice_financial_report_pdf(pdf_path: str, is_annual: bool) -> str:
             print("   ⚠️ 状态机未匹配到标准章节，触发兜底提取逻辑...")
             return slice_financial_report_pdf_fallback(pdf_path, is_annual)
 
-        print(f"   ✅ 智能切片完成，有效信息提取: {len(final_text)} 字符 (大盘股/银行股防截断机制已生效)")
+        print(f"   ✅ 智能切片完成，有效信息提取: {len(final_text)} 字符")
         return final_text 
 
     except Exception as e:
