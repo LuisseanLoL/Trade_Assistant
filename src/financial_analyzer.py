@@ -285,7 +285,7 @@ def generate_report_summary_with_llm(current_text: str, prev_text: str, report_t
         
         # 使用你本地最强的模型 (例如 Qwen 9B 或者其他的模型名称)
         # 你可以将其替换为 `os.getenv("FINANCIAL_MODEL", "qwen_9b")` 动态读取
-        model_name_to_use = "kimi_k25"
+        model_name_to_use = os.getenv("FINANCIAL_MODEL", "kimi_k25")
         
         # 🌟 核心点：强制 schema=None，解除交易主程序的格式约束！
         return get_LLM_message(system_content=sys_prompt, user_message=user_prompt, model_id=model_name_to_use, schema=None)
