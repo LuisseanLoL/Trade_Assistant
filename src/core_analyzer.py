@@ -128,26 +128,47 @@ def run_core_analysis(
     # === 阶段 1：初筛过滤器 ===
     print(f"⏳ 开始呼叫基础模型 ({flash_model}) 进行初筛逻辑推演...")
     filter_start_time = time.time()
-    
+
+    # 👇 新增：专门针对初筛阶段的重试机制
+    def call_flash_with_retry(max_retries=3, delay=2):
+        for attempt in range(1, max_retries + 1):
+            try:
+                return get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=flash_model)
+            except Exception as e:
+                if attempt < max_retries:
+                    print(f"   ⚠️ 初筛遇到异常 (尝试 {attempt}/{max_retries}): {e}\n   🔄 触发重试机制，等待 {delay} 秒...")
+                    time.sleep(delay)
+                else:
+                    print(f"   ❌ 初筛重试次数耗尽，最后一次报错: {e}")
+                    raise e
+    # 👆 新增结束
+
     if use_pro and dual_filter:
         if float(position) > 0: 
             run_pro = True
             print("   💡 当前持仓大于0，跳过 API 请求，直接进入高级决议圈...")
         else:
-            res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=flash_model)
             try:
+                # 替换为带重试的调用
+                res_text = call_flash_with_retry()
                 c_text = res_text.replace("“", '"').replace("”", '"') # type: ignore
                 s_idx, e_idx = c_text.find('{'), c_text.rfind('}')
                 if s_idx != -1 and e_idx != -1:
                     action_result = json_repair.loads(c_text[s_idx : e_idx + 1]).get('操作', '') # type: ignore
                     if action_result in ['买入', '卖出', '持有']: run_pro = True
             except: 
+                # 如果多次重试依然崩溃，直接放行，让后面的高级模型(Pro)去兜底
                 run_pro = True 
     elif use_pro and not dual_filter:
         run_pro = True
         print("   💡 未开启双筛，跳过 API 请求，直接进入高级决议圈...")
     else:
-        res_text = get_LLM_message(system_content=sys_content, user_message=user_msg, model_id=flash_model)
+        try:
+            # 替换为带重试的调用
+            res_text = call_flash_with_retry()
+        except:
+            # 单一模型模式下如果重试全挂了，给一个兜底的安全 JSON，防止后续解析彻底卡死
+            res_text = '{"操作": "观望", "原因": "API 多次重试均失败，触发系统兜底强制观望。", "建议仓位": 0, "置信度": 0, "预期": "震荡", "建议买入价": null, "目标卖出价": null, "建议止损价": null, "各种信号": {"基本面分析":{"信号":"中性","解析":"无","置信度":0},"技术分析":{"信号":"中性","解析":"无","置信度":0},"情绪分析":{"信号":"中性","解析":"无","置信度":0},"估值分析":{"信号":"中性","解析":"无","置信度":0},"量化分析":{"信号":"中性","解析":"无","置信度":0}}}'
 
     filter_cost_time = time.time() - filter_start_time
     print(f"✅ 基础模型初筛执行完毕，耗时: {filter_cost_time:.2f} 秒\n")
@@ -163,9 +184,17 @@ def run_core_analysis(
             match = re.search(r"最新财务报告期:\s*([0-9\-]+)", in_str)
             if match:
                 report_date_raw = match.group(1).replace("-", "").strip() 
+                
+                # 👇 新增：记录财报分析开始时间
+                fin_start_time = time.time()
+                
                 fin_summary = process_pipeline(stock_code, safe_s_name, report_date_raw)
                 
+                # 👇 新增：计算并打印耗时
+                fin_cost_time = time.time() - fin_start_time
+                
                 if fin_summary:
+                    print(f"   ✅ 深度财报研读完毕，耗时: {fin_cost_time:.2f} 秒")
                     user_msg += f"\n\n=================================\n### 【大模型深度财报解析与战略一致性校验】\n{fin_summary}\n"
             else:
                 print("   ⚠️ 无法在原文中提取到财报日期，跳过财报解析。")
