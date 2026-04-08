@@ -40,7 +40,7 @@ def get_stock_name_bs(stock_code):
         stock_name = rs_basic.get_row_data()[1]
         
     if need_logout:
-        bs.logout()
+        pass # 不要调用 bs.logout()，保留给外层的 run_batch.py 统一管理
         
     return stock_name
 
@@ -69,7 +69,7 @@ def get_chart_data(stock_code, beg, end):
             df[col] = pd.to_numeric(df[col], errors='coerce')
             
     if need_logout:
-        bs.logout()
+        pass # 不要调用 bs.logout()，保留给外层的 run_batch.py 统一管理
         
     return df
 
@@ -98,7 +98,7 @@ def get_30m_chart_data(stock_code, beg, end):
             df[col] = pd.to_numeric(df[col], errors='coerce')
             
     if need_logout:
-        bs.logout()
+        pass # 不要调用 bs.logout()，保留给外层的 run_batch.py 统一管理
             
     return df
 
@@ -868,6 +868,12 @@ def get_stock_data(stock_code:str, beg:str, end:str, current_date:str):
     filepath_data = os.path.join(data_dir, filename_data)
     save_data.to_csv(filepath_data, index=False)
     print(f"行情数据文件已保存至: {filepath_data}")
+
+    # ================= 新增安全拦截 =================
+    if processed_data.empty:
+        print(f"⚠️ 警告：股票 {stock_code} 获取到的 K 线数据为空，已终止计算以防崩溃。")
+        return f"获取失败：{stock_code} 暂无有效行情数据。"
+    # ===============================================
 
     latest_row = processed_data.iloc[-1]
     latest_close = safe_float(latest_row['收盘'])
