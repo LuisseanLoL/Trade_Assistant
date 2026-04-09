@@ -38,13 +38,18 @@ def load_daily_table_by_date(date_str):
     if os.path.exists(file_path):
         try:
             df = pd.read_csv(file_path, dtype=str, on_bad_lines='skip')
-            df['_conf_val'] = df['置信度'].str.replace('%', '', regex=False).astype(float).fillna(0)
+            
+            # 【修复点】：安全转换置信度，忽略无法转换的字符（如 "-"）
+            df['_conf_val'] = pd.to_numeric(df['置信度'].str.replace('%', '', regex=False), errors='coerce').fillna(0)
+            
             df['_action_rank'] = df['操作'].apply(lambda x: 0 if str(x).strip() == '买入' else 1)
             # 买入优先，同操作置信度高的优先
             df = df.sort_values(by=['_action_rank', '_conf_val'], ascending=[True, False]).drop(columns=['_conf_val', '_action_rank'])
             df['详情'] = '查看'
             return df.to_dict('records')
-        except: pass
+        except Exception as e:
+            # 建议把报错打印出来，别用 pass，不然以后排错非常痛苦
+            print(f"读取或解析表格 {file_path} 失败: {e}") 
     return []
 
 def get_random_unprocessed_stock():
